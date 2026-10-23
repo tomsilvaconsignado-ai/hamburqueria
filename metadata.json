@@ -1,0 +1,6 @@
+{
+  "name": "Burger Hub - Plataforma de Pedidos para Hamburgueria",
+  "description": "Sistema completo e profissional de pedidos para hamburgueria artesanal com storefront, checkout, painel administrativo, KDS para cozinha e módulo para entregadores.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
