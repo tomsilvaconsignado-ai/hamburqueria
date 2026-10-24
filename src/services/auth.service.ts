@@ -10,6 +10,7 @@ import {
   getProfileByEmail,
 } from './storage';
 import type { Result } from './remote';
+import { appUrl } from '../lib/appUrl';
 import { UserProfile, UserRole } from '../types';
 
 export interface SignUpParams {
@@ -90,7 +91,7 @@ export const authService = {
         password: params.password,
         options: {
           data: { full_name: params.full_name.trim(), phone: params.phone.trim() },
-          emailRedirectTo: `${window.location.origin}/login`,
+          emailRedirectTo: appUrl('/login'),
         },
       });
 
@@ -200,7 +201,7 @@ export const authService = {
 
     if (isSupabaseConfigured && supabase) {
       const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
-        redirectTo: `${window.location.origin}/recuperar-senha`,
+        redirectTo: appUrl('/recuperar-senha'),
       });
       if (error) return { success: false, message: error.message };
     }

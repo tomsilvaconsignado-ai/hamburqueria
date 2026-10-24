@@ -17,6 +17,7 @@ import { formatCentsToBRL } from '../../lib/formatters/currency';
 import { formatDateTimeBR } from '../../lib/formatters/date';
 import { getMyOrders, subscribeToRealtime, updateOrderStatus } from '../../services/storage';
 import { useAuth } from '../auth/AuthContext';
+import { appUrl } from '../../lib/appUrl';
 
 interface OrderTrackingModalProps {
   isOpen: boolean;
@@ -255,7 +256,7 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
                   type="button"
                   onClick={() =>
                     navigator.clipboard.writeText(
-                      `${window.location.origin}/acompanhar/${selectedOrder.guest_access_token}`
+                      appUrl(`/acompanhar/${selectedOrder.guest_access_token}`)
                     )
                   }
                   className="px-3 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-300 font-bold transition cursor-pointer"

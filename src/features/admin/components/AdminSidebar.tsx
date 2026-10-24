@@ -15,6 +15,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { StoreSettings } from '../../../types';
+import { appUrl } from '../../../lib/appUrl';
 
 export type AdminTab =
   | 'dashboard'
@@ -210,7 +211,7 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
         {/* Bottom Actions */}
         <div className="p-4 border-t border-zinc-800/80 space-y-2 bg-[#0c0e14]/50">
           <a
-            href="/"
+            href={appUrl('/')}
             target="_blank"
             rel="noreferrer"
             className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-white text-xs font-bold transition"

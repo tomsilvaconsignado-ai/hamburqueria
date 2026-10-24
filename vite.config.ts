@@ -5,6 +5,8 @@ import {defineConfig} from 'vitest/config';
 
 export default defineConfig(() => {
   return {
+    // Subcaminho de publicação (GitHub Pages de projeto: "/hamburqueria/")
+    base: process.env.VITE_BASE_PATH || '/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

@@ -78,14 +78,18 @@ a partir de `.env.example` com a URL e a anon key exibidas pelo `supabase start`
    `https://<ref>.supabase.co/functions/v1/mercadopago-webhook`.
    Só depois disso habilite **Pix Online** e **Cartão Online** em Admin → Configurações (o seed deixa apenas
    pagamento na entrega habilitado).
-4. **Auth**: em Authentication → URL Configuration, defina o Site URL e as Redirect URLs do domínio.
-5. **Frontend (Azure Static Web Apps)**: crie o recurso Static Web App e, no GitHub
-   (Settings → Secrets and variables → Actions), configure:
-   - Secrets: `AZURE_STATIC_WEB_APPS_API_TOKEN`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`
-   - Variable: `DEPLOY_ENABLED=true`
+4. **Auth**: em Authentication → URL Configuration, defina o Site URL
+   (`https://<usuario>.github.io/hamburqueria`) e as Redirect URLs do domínio. Use o mesmo endereço,
+   com o `/hamburqueria`, no secret `SITE_URL` das Edge Functions.
+5. **Frontend (GitHub Pages)**:
+   - Em Settings → Pages → Build and deployment, selecione **Source = GitHub Actions**. Com "Deploy from a
+     branch", o Pages publica o código-fonte sem compilar e a página fica em branco.
+   - Em Settings → Secrets and variables → Actions, crie `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY`.
+     Sem eles o site é publicado em modo demonstração.
 
-   O workflow `.github/workflows/ci.yml` roda typecheck, testes e build em todo push/PR e publica na `main`
-   apenas se o CI passar. `public/staticwebapp.config.json` faz o fallback das rotas da SPA para `index.html`.
+   O workflow `.github/workflows/ci.yml` roda typecheck, testes e build em todo push/PR e, na `main`, compila
+   com `base=/hamburqueria/` e publica no Pages. O `404.html` (cópia do `index.html`) permite recarregar
+   rotas internas como `/admin` e `/cozinha`.
 
 ## 5. Estrutura
 

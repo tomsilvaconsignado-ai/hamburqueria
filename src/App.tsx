@@ -17,6 +17,7 @@ import { ProtectedRoute } from './features/auth/ProtectedRoute';
 import { AuthProvider } from './features/auth/AuthContext';
 import { CartProvider } from './features/cart/CartContext';
 import { Product, StoreSettings, Order } from './types';
+import { BASE_PATH } from './lib/appUrl';
 import { IS_DEMO_MODE, getProducts, getCategories, getStoreSettings, subscribeToRealtime } from './services/storage';
 
 // Áreas internas carregadas sob demanda (o cliente não baixa o código dos painéis)
@@ -264,7 +265,7 @@ function AppContent() {
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={BASE_PATH || undefined}>
       <AuthProvider>
         <CartProvider>
           <AppContent />
