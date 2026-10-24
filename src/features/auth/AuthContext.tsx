@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { UserProfile, UserRole } from '../../types';
 import { authService, SignInParams, SignUpParams } from '../../services/auth.service';
-import { subscribeToRealtime } from '../../services/storage';
+import { IS_DEMO_MODE, subscribeToRealtime } from '../../services/storage';
 import { supabase, isSupabaseConfigured } from '../../lib/supabase/client';
 
 interface AuthContextType {
@@ -12,7 +12,7 @@ interface AuthContextType {
   login: (params: SignInParams) => Promise<{ success: boolean; profile?: UserProfile; error?: string }>;
   register: (params: SignUpParams) => Promise<{ success: boolean; profile?: UserProfile; error?: string }>;
   logout: () => Promise<void>;
-  switchDemoRole: (role: UserRole) => UserProfile;
+  switchDemoRole: (role: UserRole) => UserProfile | null;
   refreshProfile: () => Promise<void>;
 }
 
@@ -37,34 +37,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     loadCurrentSession();
 
-    // Listener para o Supabase Auth real
     if (isSupabaseConfigured && supabase) {
-      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      // Não chamar o Supabase de dentro do callback (pode travar o client); adia para o próximo tick
+      const {
+        data: { subscription },
+      } = supabase.auth.onAuthStateChange((_event, session) => {
         if (!session?.user) {
           setUser(null);
         } else {
-          const profile = await authService.getCurrentProfile();
-          setUser(profile);
+          setTimeout(loadCurrentSession, 0);
         }
       });
-      return () => {
-        subscription.unsubscribe();
-      };
+      return () => subscription.unsubscribe();
     }
 
-    // Listener para eventos em tempo real do storage
-    const unsub = subscribeToRealtime(() => {
-      loadCurrentSession();
-    });
-    return unsub;
+    // Modo demonstração: perfil ativo pode mudar em outra aba ou pelo seletor de perfis
+    if (IS_DEMO_MODE) {
+      return subscribeToRealtime(() => {
+        loadCurrentSession();
+      });
+    }
   }, []);
 
   const login = async (params: SignInParams) => {
     setLoading(true);
     const res = await authService.signIn(params);
-    if (res.success && res.profile) {
-      setUser(res.profile);
-    }
+    if (res.success && res.profile) setUser(res.profile);
     setLoading(false);
     return res;
   };
@@ -72,9 +70,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const register = async (params: SignUpParams) => {
     setLoading(true);
     const res = await authService.signUp(params);
-    if (res.success && res.profile) {
-      setUser(res.profile);
-    }
+    if (res.success && res.profile) setUser(res.profile);
     setLoading(false);
     return res;
   };

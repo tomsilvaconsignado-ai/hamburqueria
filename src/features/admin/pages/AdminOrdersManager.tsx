@@ -27,6 +27,8 @@ import {
 } from '../../../services/storage';
 import { formatCentsToBRL } from '../../../lib/formatters/currency';
 import { formatDateTimeBR } from '../../../lib/formatters/date';
+import { reportResult } from '../../../lib/reportResult';
+import { isOnlinePayment } from '../../../services/orderStateMachine';
 
 interface AdminOrdersManagerProps {
   orders: Order[];
@@ -71,14 +73,15 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
     return matchesStatus && matchesType && matchesSearch;
   });
 
-  const handleUpdateStatus = (orderId: string, nextStatus: OrderStatus) => {
-    updateOrderStatus(orderId, nextStatus, 'ADMIN', 'Administrador Executivo', 'Atualização no painel administrativo');
+  const handleUpdateStatus = async (orderId: string, nextStatus: OrderStatus) => {
+    const res = await updateOrderStatus(orderId, nextStatus, 'ADMIN', 'Administrador', 'Atualização no painel administrativo');
+    reportResult(res);
     onReloadData();
   };
 
-  const handleConfirmAssignCourier = () => {
+  const handleConfirmAssignCourier = async () => {
     if (!assigningOrderId || !selectedCourierId) return;
-    const res = assignCourierToOrder(assigningOrderId, selectedCourierId, 'Administrador');
+    const res = await assignCourierToOrder(assigningOrderId, selectedCourierId, 'Administrador');
     if (!res.success) {
       alert(res.error);
     } else {
@@ -88,11 +91,11 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
     }
   };
 
-  const handleConfirmCancelOrder = () => {
+  const handleConfirmCancelOrder = async () => {
     if (!cancellingOrderId) return;
     setCancelError(null);
 
-    const res = cancelOrder(cancellingOrderId, cancellationReason, 'Administrador');
+    const res = await cancelOrder(cancellingOrderId, cancellationReason, 'Administrador');
     if (!res.success) {
       setCancelError(res.error || 'Erro ao cancelar pedido.');
     } else {
@@ -339,14 +342,22 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
 
                       {order.status !== 'CONCLUIDO' && order.status !== 'CANCELADO' && (
                         <div className="inline-flex space-x-1">
-                          {order.status === 'AGUARDANDO_CONFIRMACAO' && (
-                            <button
-                              onClick={() => handleUpdateStatus(order.id, 'CONFIRMADO')}
-                              className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] transition"
-                            >
-                              Confirmar
-                            </button>
-                          )}
+                          {order.status === 'AGUARDANDO_CONFIRMACAO' &&
+                            (isOnlinePayment(order) && order.payment_status !== 'PAGO' ? (
+                              <span
+                                className="px-2.5 py-1 rounded-lg bg-zinc-800 text-zinc-400 font-bold text-[10px]"
+                                title="Pedido só pode ser confirmado após aprovação do pagamento online"
+                              >
+                                Aguardando pgto
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => handleUpdateStatus(order.id, 'CONFIRMADO')}
+                                className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] transition"
+                              >
+                                Confirmar
+                              </button>
+                            ))}
                           {order.status === 'CONFIRMADO' && (
                             <button
                               onClick={() => handleUpdateStatus(order.id, 'EM_PREPARACAO')}
@@ -363,15 +374,25 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                               Pronto
                             </button>
                           )}
-                          {order.status === 'PRONTO' && (
+                          {order.status === 'PRONTO' && order.fulfillment_type === 'PICKUP' && (
+                            <button
+                              onClick={() => handleUpdateStatus(order.id, 'AGUARDANDO_RETIRADA')}
+                              className="px-2.5 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold text-[10px] transition"
+                            >
+                              No Balcão
+                            </button>
+                          )}
+                          {order.status === 'PRONTO' && order.fulfillment_type === 'DELIVERY' && (
                             <button
                               onClick={() => handleUpdateStatus(order.id, 'EM_ENTREGA')}
-                              className="px-2.5 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold text-[10px] transition"
+                              disabled={!order.assigned_courier_id}
+                              title={order.assigned_courier_id ? undefined : 'Atribua um entregador antes de despachar'}
+                              className="px-2.5 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-[10px] transition"
                             >
                               Despachar
                             </button>
                           )}
-                          {order.status === 'EM_ENTREGA' && (
+                          {(order.status === 'EM_ENTREGA' || order.status === 'AGUARDANDO_RETIRADA') && (
                             <button
                               onClick={() => handleUpdateStatus(order.id, 'CONCLUIDO')}
                               className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] transition"

@@ -1,3 +1,4 @@
+import { reportResult } from '../../lib/reportResult';
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -100,7 +101,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ subpage = 'dashb
     setAllUsers(profs);
     setCouriers(getCouriers());
     setAuditLogs(getAuditLogs());
-    setAdminProfile(getActiveProfile() || profs.find((p) => p.role === 'ADMIN') || null);
+    setAdminProfile(getActiveProfile());
   };
 
   useEffect(() => {
@@ -186,8 +187,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ subpage = 'dashb
 
               <button
                 onClick={() => {
-                  toggleStoreOpen();
-                  loadData();
+                  toggleStoreOpen().then(reportResult);
                 }}
                 className="text-amber-400 hover:text-amber-300 ml-1 transition cursor-pointer"
                 title="Alternar rápida de loja aberta/fechada"

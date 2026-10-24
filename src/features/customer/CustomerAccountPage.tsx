@@ -15,7 +15,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { Order, CustomerAddress } from '../../types';
-import { getOrders, subscribeToRealtime } from '../../services/storage';
+import { getMyOrders, subscribeToRealtime } from '../../services/storage';
 import { formatCentsToBRL } from '../../lib/formatters/currency';
 import { formatDateTimeBR } from '../../lib/formatters/date';
 
@@ -57,15 +57,9 @@ export const CustomerAccountPage: React.FC = () => {
 
   const loadCustomerOrders = () => {
     if (!user) return;
-    const all = getOrders();
-    // Filtro seguro: somente pedidos deste cliente
-    const myOrders = all.filter(
-      (o) =>
-        o.customer_id === user.id ||
-        o.customer_phone.replace(/\D/g, '') === user.phone.replace(/\D/g, '') ||
-        o.customer_name.toLowerCase() === user.full_name.toLowerCase()
-    );
-    setOrders(myOrders);
+    // Somente pedidos vinculados a esta conta ou feitos neste navegador
+    // (nome/telefone iguais não provam que o pedido é do cliente)
+    setOrders(getMyOrders(user.id));
   };
 
   useEffect(() => {

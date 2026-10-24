@@ -24,6 +24,7 @@ export const AdminStaffUsersPage: React.FC<AdminStaffUsersPageProps> = ({
   const [newStaffEmail, setNewStaffEmail] = useState('');
   const [newStaffPhone, setNewStaffPhone] = useState('');
   const [newStaffRole, setNewStaffRole] = useState<'KITCHEN' | 'DELIVERY'>('KITCHEN');
+  const [newStaffPassword, setNewStaffPassword] = useState('');
   const [staffLoading, setStaffLoading] = useState(false);
   const [staffFeedback, setStaffFeedback] = useState<{
     type: 'success' | 'error';
@@ -45,6 +46,7 @@ export const AdminStaffUsersPage: React.FC<AdminStaffUsersPageProps> = ({
         email: newStaffEmail,
         phone: newStaffPhone,
         role: newStaffRole,
+        password: newStaffPassword,
       });
 
       if (!res.success) {
@@ -59,6 +61,7 @@ export const AdminStaffUsersPage: React.FC<AdminStaffUsersPageProps> = ({
         });
         setNewStaffName('');
         setNewStaffEmail('');
+        setNewStaffPassword('');
         setNewStaffPhone('');
         onReloadData();
       }
@@ -170,6 +173,20 @@ export const AdminStaffUsersPage: React.FC<AdminStaffUsersPageProps> = ({
             </div>
 
             <div>
+              <label className="text-zinc-400 block mb-1">Senha Inicial * (mín. 8 caracteres)</label>
+              <input
+                type="password"
+                required
+                minLength={8}
+                autoComplete="new-password"
+                value={newStaffPassword}
+                onChange={(e) => setNewStaffPassword(e.target.value)}
+                placeholder="Entregue ao funcionário e peça para trocar no primeiro acesso"
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-2.5 text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500"
+              />
+            </div>
+
+            <div>
               <label className="text-zinc-400 block mb-1">Perfil Operacional (Role) *</label>
               <select
                 value={newStaffRole}
@@ -201,7 +218,8 @@ export const AdminStaffUsersPage: React.FC<AdminStaffUsersPageProps> = ({
           </div>
           <p className="text-xs text-zinc-400 leading-relaxed">
             Por segurança, o cadastro público cria apenas contas com perfil de <strong>CLIENTE</strong>.
-            Para promover uma conta cadastrada ao perfil <strong>ADMIN</strong>, execute a atribuição segura:
+            Para promover uma conta cadastrada ao perfil <strong>ADMIN</strong>, execute a atribuição segura.
+            O primeiro administrador é criado pelo SQL Editor do Supabase (ver README).
           </p>
 
           {adminFeedback && (

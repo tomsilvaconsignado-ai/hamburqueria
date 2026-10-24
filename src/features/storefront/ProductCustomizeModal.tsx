@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { X, Plus, Minus, ShoppingBag, Check } from 'lucide-react';
 import { Product, SelectedOption } from '../../types';
-import { formatCentsToBRL } from '../../lib/formatters/currency';
+import { formatCentsToBRL, getEffectivePriceCents } from '../../lib/formatters/currency';
 import { useCart } from '../cart/CartContext';
 
 interface ProductCustomizeModalProps {
@@ -81,7 +81,7 @@ export const ProductCustomizeModal: React.FC<ProductCustomizeModalProps> = ({
   const unitPriceCents = useMemo(() => {
     if (!product) return 0;
     const extrasTotal = consolidatedOptions.reduce((acc, opt) => acc + opt.unit_price_delta_cents, 0);
-    return product.price_cents + extrasTotal;
+    return getEffectivePriceCents(product) + extrasTotal;
   }, [product, consolidatedOptions]);
 
   const totalPriceCents = unitPriceCents * quantity;
@@ -134,7 +134,7 @@ export const ProductCustomizeModal: React.FC<ProductCustomizeModalProps> = ({
                 {product.name}
               </h2>
               <span className="text-lg font-bold text-amber-400">
-                {formatCentsToBRL(product.price_cents)}
+                {formatCentsToBRL(getEffectivePriceCents(product))}
               </span>
             </div>
           </div>

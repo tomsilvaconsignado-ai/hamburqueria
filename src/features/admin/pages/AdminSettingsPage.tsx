@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { reportResult } from '../../../lib/reportResult';
 import {
   Settings,
   Store,
@@ -94,12 +95,12 @@ export const AdminSettingsPage: React.FC<AdminSettingsPageProps> = ({
   const [zoneEstimatedMin, setZoneEstimatedMin] = useState(35);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
 
-  const handleSaveGeneralSettings = (e: React.FormEvent) => {
+  const handleSaveGeneralSettings = async (e: React.FormEvent) => {
     e.preventDefault();
 
     const minCents = Math.round(parseFloat(minOrderStr.replace(',', '.')) * 100);
 
-    updateStoreSettings({
+    const res = await updateStoreSettings({
       store_name: storeName.trim(),
       tagline: tagline.trim(),
       phone: phone.trim(),
@@ -120,14 +121,14 @@ export const AdminSettingsPage: React.FC<AdminSettingsPageProps> = ({
       },
     });
 
-    setFeedbackMsg('Configurações salvas com sucesso!');
+    setFeedbackMsg(res.success ? 'Configurações salvas com sucesso!' : `Erro ao salvar: ${res.error}`);
     setTimeout(() => setFeedbackMsg(null), 3000);
     onReloadData();
   };
 
   const handleQuickStatusChange = (status: 'OPEN' | 'CLOSED' | 'PAUSED') => {
     setCurrentStatus(status);
-    setStoreStatus(status);
+    setStoreStatus(status).then(reportResult);
     onReloadData();
   };
 
@@ -144,7 +145,7 @@ export const AdminSettingsPage: React.FC<AdminSettingsPageProps> = ({
   };
 
   // Zones Handler
-  const handleSaveZone = (e: React.FormEvent) => {
+  const handleSaveZone = async (e: React.FormEvent) => {
     e.preventDefault();
     const feeCents = Math.round(parseFloat(zoneFeeStr.replace(',', '.')) * 100);
     if (isNaN(feeCents) || feeCents < 0) {
@@ -163,19 +164,23 @@ export const AdminSettingsPage: React.FC<AdminSettingsPageProps> = ({
       name: zoneName.trim(),
       neighborhoods,
       fee_cents: feeCents,
-      minimum_order_cents: 2000,
+      minimum_order_cents: editingZone ? editingZone.minimum_order_cents : 2000,
       estimated_minutes: Number(zoneEstimatedMin) || 35,
-      is_active: true,
+      is_active: editingZone ? editingZone.is_active : true,
     };
 
-    saveDeliveryZone(zoneData);
+    const res = await saveDeliveryZone(zoneData);
+    if (!res.success) {
+      alert(res.error || 'Erro ao salvar zona de entrega.');
+      return;
+    }
     setIsZoneModalOpen(false);
     onReloadData();
   };
 
   const handleDeleteZone = (id: string) => {
     if (confirm('Deseja excluir esta zona de entrega?')) {
-      deleteDeliveryZone(id);
+      deleteDeliveryZone(id).then(reportResult);
       onReloadData();
     }
   };
@@ -507,6 +512,10 @@ export const AdminSettingsPage: React.FC<AdminSettingsPageProps> = ({
               6. Formas de Pagamento Aceitas
             </h3>
           </div>
+          <p className="text-[11px] text-amber-300/80">
+            Pix e Cartão Online só funcionam com as Edge Functions do Mercado Pago publicadas (create-payment e
+            mercadopago-webhook). Habilite-os somente depois disso.
+          </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
             {[

@@ -1,41 +1,60 @@
-import { PaymentMethod, PaymentRecord } from '../types';
+import { supabase } from '../lib/supabase/client';
+import { IS_DEMO_MODE, simulateDemoPaymentApproval } from './storage';
+import { getGuestTokenForOrder } from './remote';
+import { Order } from '../types';
+
+export interface OnlinePaymentResult {
+  success: boolean;
+  error?: string;
+  /** PIX: código copia-e-cola e imagem do QR Code gerados pelo Mercado Pago */
+  pixCopyPaste?: string;
+  pixQrCodeDataUrl?: string;
+  expiresAt?: string;
+  /** Cartão: URL do Checkout Pro do Mercado Pago (os dados do cartão nunca passam pelo app) */
+  checkoutUrl?: string;
+  alreadyPaid?: boolean;
+}
 
 export const paymentService = {
   /**
-   * Gera dados de cobrança Pix reais/emulados com chave copia-e-cola e QR code.
+   * Inicia a cobrança online do pedido pela Edge Function `create-payment`.
+   * O valor é lido do banco pelo servidor; o navegador só informa o pedido.
    */
-  generatePixCharge(orderNumber: string, amountCents: number): {
-    qrCodeUrl: string;
-    copyPasteCode: string;
-    expiresAt: string;
-  } {
-    const formattedVal = (amountCents / 100).toFixed(2);
-    // Código EMV padrão Pix
-    const copyPasteCode = `00020126580014br.gov.bcb.pix0136burgerhub-${orderNumber.replace('#', '')}-pix-pagamento520400005303986540${formattedVal}5802BR5910BURGER HUB6009SAO PAULO62070503***6304ABCD`;
-    // URL do QR Code gerado via serviço público seguro de QR code
-    const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(copyPasteCode)}`;
-    const expiresAt = new Date(Date.now() + 15 * 60000).toISOString();
+  async startOnlinePayment(order: Order): Promise<OnlinePaymentResult> {
+    if (IS_DEMO_MODE || !supabase) {
+      return { success: false, error: 'Pagamento online indisponível no modo demonstração.' };
+    }
 
-    return { qrCodeUrl, copyPasteCode, expiresAt };
+    const { data, error } = await supabase.functions.invoke('create-payment', {
+      body: {
+        order_id: order.id,
+        guest_token: order.guest_access_token ?? getGuestTokenForOrder(order.id),
+      },
+    });
+
+    if (error) {
+      let message = 'Não foi possível iniciar o pagamento online.';
+      try {
+        const body = await (error as { context?: Response }).context?.json();
+        if (body?.error) message = body.error;
+      } catch {
+        // mantém mensagem padrão
+      }
+      return { success: false, error: message };
+    }
+
+    if (data?.status === 'PAGO') return { success: true, alreadyPaid: true };
+    if (data?.method === 'CARD_ONLINE') return { success: true, checkoutUrl: data.checkout_url };
+    return {
+      success: true,
+      pixCopyPaste: data?.pix_copy_paste,
+      pixQrCodeDataUrl: data?.pix_qr_code_base64 ? `data:image/png;base64,${data.pix_qr_code_base64}` : undefined,
+      expiresAt: data?.expires_at,
+    };
   },
 
-  /**
-   * Cria registro de pagamento correspondente
-   */
-  createPaymentRecord(orderId: string, method: PaymentMethod, amountCents: number, cashChangeForCents?: number): PaymentRecord {
-    const isOnline = method === 'PIX_ONLINE' || method === 'CARD_ONLINE';
-    return {
-      id: `pay-${Date.now()}`,
-      order_id: orderId,
-      provider: isOnline ? 'MERCADOPAGO' : 'MANUAL',
-      provider_payment_id: isOnline ? `mp_${Date.now()}` : undefined,
-      method,
-      status: isOnline ? 'PAGO' : 'PAGAMENTO_NA_ENTREGA',
-      amount_cents: amountCents,
-      cash_change_for_cents: cashChangeForCents,
-      created_at: new Date().toISOString(),
-      confirmed_at: isOnline ? new Date().toISOString() : undefined,
-      updated_at: new Date().toISOString(),
-    };
+  /** Somente modo demonstração: simula a confirmação do gateway. */
+  simulateDemoApproval(orderId: string) {
+    return simulateDemoPaymentApproval(orderId);
   },
 };

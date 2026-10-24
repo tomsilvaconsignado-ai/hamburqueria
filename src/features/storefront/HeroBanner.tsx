@@ -1,7 +1,7 @@
 import React from 'react';
 import { ShoppingBag, ArrowRight, Sparkles, Clock, ShieldCheck, Flame, Star } from 'lucide-react';
 import { Product } from '../../types';
-import { formatCentsToBRL } from '../../lib/formatters/currency';
+import { formatCentsToBRL, getEffectivePriceCents, getStrikethroughPriceCents } from '../../lib/formatters/currency';
 
 interface HeroBannerProps {
   featuredProduct: Product;
@@ -53,11 +53,11 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({
               <div className="flex items-center space-x-3 bg-[#151722]/80 backdrop-blur-md px-4 py-2.5 rounded-2xl border border-zinc-700/60 shadow-lg">
                 <span className="text-xs text-zinc-400 font-medium">Preço Especial</span>
                 <span className="text-2xl font-black text-amber-400 font-['Bebas_Neue',sans-serif]">
-                  {formatCentsToBRL(featuredProduct.price_cents)}
+                  {formatCentsToBRL(getEffectivePriceCents(featuredProduct))}
                 </span>
-                {featuredProduct.original_price_cents && (
+                {getStrikethroughPriceCents(featuredProduct) && (
                   <span className="text-xs text-zinc-500 line-through">
-                    {formatCentsToBRL(featuredProduct.original_price_cents)}
+                    {formatCentsToBRL(getStrikethroughPriceCents(featuredProduct)!)}
                   </span>
                 )}
               </div>

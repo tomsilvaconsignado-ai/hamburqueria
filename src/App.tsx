@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { Navbar } from './components/layout/Navbar';
 import { Footer } from './components/layout/Footer';
@@ -13,20 +13,20 @@ import { LoginPage } from './features/auth/LoginPage';
 import { RegisterPage } from './features/auth/RegisterPage';
 import { ForgotPasswordPage } from './features/auth/ForgotPasswordPage';
 import { CustomerAccountPage } from './features/customer/CustomerAccountPage';
-import { KitchenKDS } from './features/kitchen/KitchenKDS';
-import { DeliveryPanel } from './features/delivery/DeliveryPanel';
-import { AdminDashboard } from './features/admin/AdminDashboard';
 import { ProtectedRoute } from './features/auth/ProtectedRoute';
-import { AuthProvider, useAuth } from './features/auth/AuthContext';
+import { AuthProvider } from './features/auth/AuthContext';
 import { CartProvider } from './features/cart/CartContext';
 import { Product, StoreSettings, Order } from './types';
-import {
-  initializeStorageIfEmpty,
-  getProducts,
-  getCategories,
-  getStoreSettings,
-  subscribeToRealtime,
-} from './services/storage';
+import { IS_DEMO_MODE, getProducts, getCategories, getStoreSettings, subscribeToRealtime } from './services/storage';
+
+// Áreas internas carregadas sob demanda (o cliente não baixa o código dos painéis)
+const KitchenKDS = lazy(() => import('./features/kitchen/KitchenKDS').then((m) => ({ default: m.KitchenKDS })));
+const DeliveryPanel = lazy(() => import('./features/delivery/DeliveryPanel').then((m) => ({ default: m.DeliveryPanel })));
+const AdminDashboard = lazy(() => import('./features/admin/AdminDashboard').then((m) => ({ default: m.AdminDashboard })));
+
+const RouteFallback = () => (
+  <div className="min-h-[50vh] flex items-center justify-center text-xs text-zinc-500">Carregando...</div>
+);
 
 function AppContent() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -80,8 +80,8 @@ function AppContent() {
 
   return (
     <div className="min-h-screen bg-[#0a0c12] text-zinc-100 flex flex-col font-sans selection:bg-amber-500 selection:text-zinc-950">
-      {/* Top Multi-Role Switcher and Simulator */}
-      <RoleSwitcherBar />
+      {/* Seletor de perfis e simulador: somente no modo demonstração (sem Supabase) */}
+      {IS_DEMO_MODE && <RoleSwitcherBar />}
 
       {/* Global Navbar */}
       <Navbar
@@ -93,6 +93,7 @@ function AppContent() {
 
       {/* Main Application Routes */}
       <main className="flex-1">
+        <Suspense fallback={<RouteFallback />}>
         <Routes>
           {/* Public Storefront */}
           <Route
@@ -214,6 +215,7 @@ function AppContent() {
           {/* Catch-all */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </Suspense>
       </main>
 
       {/* Global Footer */}
@@ -261,10 +263,6 @@ function AppContent() {
 }
 
 export default function App() {
-  useEffect(() => {
-    initializeStorageIfEmpty();
-  }, []);
-
   return (
     <BrowserRouter>
       <AuthProvider>

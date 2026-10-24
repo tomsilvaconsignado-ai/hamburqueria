@@ -24,5 +24,6 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "exclude": ["dist"]
+  "include": ["src", "vite.config.ts"],
+  "exclude": ["dist", "supabase/functions"]
 }

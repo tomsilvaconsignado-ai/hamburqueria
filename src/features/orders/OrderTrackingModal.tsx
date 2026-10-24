@@ -15,7 +15,8 @@ import {
 import { Order, OrderStatus } from '../../types';
 import { formatCentsToBRL } from '../../lib/formatters/currency';
 import { formatDateTimeBR } from '../../lib/formatters/date';
-import { getOrders, subscribeToRealtime, updateOrderStatus } from '../../services/storage';
+import { getMyOrders, subscribeToRealtime, updateOrderStatus } from '../../services/storage';
+import { useAuth } from '../auth/AuthContext';
 
 interface OrderTrackingModalProps {
   isOpen: boolean;
@@ -33,55 +34,49 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
   const [orders, setOrders] = useState<Order[]>([]);
   const [cancelReason, setCancelReason] = useState('');
   const [showCancelModal, setShowCancelModal] = useState(false);
+  const { user } = useAuth();
 
   const reloadOrders = () => {
-    const list = getOrders();
+    // Apenas pedidos da conta logada ou criados neste navegador (sem busca por telefone de terceiros)
+    const list = getMyOrders(user?.id);
     setOrders(list);
 
-    if (searchQuery) {
-      const found = list.find(
-        (o) =>
-          o.id === searchQuery ||
-          o.order_number.toLowerCase() === searchQuery.toLowerCase() ||
-          o.guest_access_token === searchQuery
-      );
-      if (found) setSelectedOrder(found);
-    } else if (list.length > 0 && !selectedOrder) {
-      setSelectedOrder(list[0]);
-    }
+    const current = selectedOrder ? list.find((o) => o.id === selectedOrder.id) : undefined;
+    const fromQuery = searchQuery
+      ? list.find((o) => o.id === searchQuery || o.order_number.toLowerCase() === searchQuery.toLowerCase())
+      : undefined;
+    setSelectedOrder(fromQuery ?? current ?? list[0] ?? null);
   };
 
   useEffect(() => {
     if (isOpen) {
       reloadOrders();
-      const unsub = subscribeToRealtime(() => {
+      return subscribeToRealtime(() => {
         reloadOrders();
       });
-      return unsub;
     }
-  }, [isOpen, searchQuery]);
+  }, [isOpen, searchQuery, user?.id]);
+
+  useEffect(() => {
+    if (initialOrderId) setSearchQuery(initialOrderId);
+  }, [initialOrderId]);
 
   if (!isOpen) return null;
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     const clean = searchQuery.trim().toLowerCase();
-    const found = orders.find(
-      (o) =>
-        o.order_number.toLowerCase() === clean ||
-        o.id.toLowerCase() === clean ||
-        o.customer_phone.replace(/\D/g, '').includes(clean.replace(/\D/g, ''))
-    );
+    const found = orders.find((o) => o.order_number.toLowerCase() === clean || o.id.toLowerCase() === clean);
     if (found) {
       setSelectedOrder(found);
     } else {
-      alert('Nenhum pedido encontrado com esse número ou telefone.');
+      alert('Nenhum pedido seu encontrado com esse número. Use o link de acompanhamento recebido no pedido.');
     }
   };
 
-  const handleCancelOrder = () => {
+  const handleCancelOrder = async () => {
     if (!selectedOrder) return;
-    const res = updateOrderStatus(
+    const res = await updateOrderStatus(
       selectedOrder.id,
       'CANCELADO',
       'CUSTOMER',
@@ -200,7 +195,7 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Buscar por número do pedido (ex: #BH-1041) ou telefone"
+                placeholder="Número do seu pedido (ex: #BH-1041)"
                 className="w-full bg-zinc-950 border border-zinc-750 rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500"
               />
             </div>
@@ -251,6 +246,24 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
                 </span>
               </div>
             </div>
+
+            {/* Link privado de acompanhamento (funciona em qualquer aparelho) */}
+            {selectedOrder.guest_access_token && (
+              <div className="p-3 rounded-2xl bg-zinc-900 border border-zinc-800 text-[11px] text-zinc-400 flex flex-wrap items-center justify-between gap-2">
+                <span>Guarde este link para acompanhar o pedido de outro aparelho. Não compartilhe.</span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    navigator.clipboard.writeText(
+                      `${window.location.origin}/acompanhar/${selectedOrder.guest_access_token}`
+                    )
+                  }
+                  className="px-3 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-300 font-bold transition cursor-pointer"
+                >
+                  Copiar link
+                </button>
+              </div>
+            )}
 
             {/* Cancelled Banner */}
             {selectedOrder.status === 'CANCELADO' ? (

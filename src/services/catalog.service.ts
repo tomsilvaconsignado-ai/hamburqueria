@@ -1,4 +1,5 @@
 import { getCategories, getProducts, getProductById, saveProduct, toggleProductAvailability } from './storage';
+import type { Result } from './remote';
 import { Category, Product } from '../types';
 
 export const catalogService = {
@@ -22,11 +23,11 @@ export const catalogService = {
     return getProductById(id);
   },
 
-  async updateProduct(product: Product): Promise<void> {
-    saveProduct(product);
+  updateProduct(product: Product): Promise<Result> {
+    return saveProduct(product);
   },
 
-  async toggleAvailability(id: string): Promise<void> {
-    toggleProductAvailability(id);
+  toggleAvailability(id: string): Promise<Result> {
+    return toggleProductAvailability(id);
   },
 };

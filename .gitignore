@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+supabase/.temp/
+supabase/.branches/
+.aistudio/

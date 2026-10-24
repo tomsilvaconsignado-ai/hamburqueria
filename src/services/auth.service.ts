@@ -1,5 +1,6 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase/client';
 import {
+  IS_DEMO_MODE,
   getProfiles,
   getActiveProfile,
   setActiveProfile,
@@ -8,185 +9,170 @@ import {
   provisionFirstAdmin,
   getProfileByEmail,
 } from './storage';
+import type { Result } from './remote';
 import { UserProfile, UserRole } from '../types';
 
 export interface SignUpParams {
   email: string;
-  password?: string;
+  password: string;
   full_name: string;
   phone: string;
 }
 
 export interface SignInParams {
   email: string;
-  password?: string;
+  password: string;
 }
 
 export interface CreateStaffParams {
   email: string;
-  password?: string;
+  password: string;
   full_name: string;
   phone: string;
   role: 'KITCHEN' | 'DELIVERY';
 }
 
+type AuthResult = { success: boolean; profile?: UserProfile; error?: string };
+
+async function fetchProfile(userId: string): Promise<UserProfile | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
+  if (error || !data) return null;
+  return data as UserProfile;
+}
+
 export const authService = {
   /**
-   * Retorna o perfil do usuário logado na sessão ativa
+   * Retorna o perfil do usuário logado na sessão ativa.
+   * No Supabase o perfil vem sempre do banco (nunca de dados locais).
    */
   async getCurrentProfile(): Promise<UserProfile | null> {
     if (isSupabaseConfigured && supabase) {
-      const { data: { session } } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
       if (!session?.user) {
         setActiveProfile(null);
         return null;
       }
 
-      const { data: profile, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', session.user.id)
-        .single();
-
-      if (error || !profile) {
-        // Se a trigger ainda não tiver criado ou falhar, fallback de busca local
-        const local = getProfileByEmail(session.user.email || '');
-        if (local) return local;
+      const profile = await fetchProfile(session.user.id);
+      if (!profile || !profile.is_active) {
+        if (profile && !profile.is_active) await supabase.auth.signOut();
+        setActiveProfile(null);
         return null;
       }
 
-      setActiveProfile(profile as UserProfile);
-      return profile as UserProfile;
+      setActiveProfile(profile);
+      return profile;
     }
 
     return getActiveProfile();
   },
 
   /**
-   * Cadastro público de clientes:
-   * REGRA DE SEGURANÇA: Todo cadastro público recebe role = 'CUSTOMER'.
-   * O frontend e o banco forçam isso estritamente.
+   * Cadastro público de clientes: sempre role = 'CUSTOMER'
+   * (forçado pela trigger handle_new_user no banco).
    */
-  async signUp(params: SignUpParams): Promise<{ success: boolean; profile?: UserProfile; error?: string }> {
+  async signUp(params: SignUpParams): Promise<AuthResult> {
     const cleanEmail = params.email.trim().toLowerCase();
 
     if (!cleanEmail || !params.full_name.trim() || !params.phone.trim()) {
       return { success: false, error: 'Por favor, preencha todos os campos obrigatórios.' };
     }
+    if (!params.password || params.password.length < 6) {
+      return { success: false, error: 'A senha deve ter no mínimo 6 caracteres.' };
+    }
 
     if (isSupabaseConfigured && supabase) {
       const { data, error } = await supabase.auth.signUp({
         email: cleanEmail,
-        password: params.password || 'SenhaP@ss123!',
+        password: params.password,
         options: {
-          data: {
-            full_name: params.full_name.trim(),
-            phone: params.phone.trim(),
-            // NUNCA envia role administrativa pelo cliente
-          },
+          data: { full_name: params.full_name.trim(), phone: params.phone.trim() },
+          emailRedirectTo: `${window.location.origin}/login`,
         },
       });
 
-      if (error) {
-        return { success: false, error: error.message };
-      }
+      if (error) return { success: false, error: error.message };
+      if (!data.user) return { success: false, error: 'Não foi possível concluir o cadastro.' };
 
-      if (data.user) {
-        // Busca o perfil gerado pela trigger handle_new_user
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', data.user.id)
-          .single();
-
-        const userProfile: UserProfile = (profile as UserProfile) || {
-          id: data.user.id,
-          email: cleanEmail,
-          full_name: params.full_name.trim(),
-          phone: params.phone.trim(),
-          role: 'CUSTOMER',
-          is_active: true,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
+      // Confirmação de e-mail habilitada: ainda não há sessão
+      if (!data.session) {
+        return {
+          success: false,
+          error: 'Cadastro realizado! Confirme seu e-mail pelo link que enviamos e depois faça login.',
         };
-
-        setActiveProfile(userProfile);
-        return { success: true, profile: userProfile };
       }
+
+      const profile = await fetchProfile(data.user.id);
+      if (!profile) return { success: false, error: 'Conta criada, mas o perfil ainda não está disponível. Faça login.' };
+      setActiveProfile(profile);
+      return { success: true, profile };
     }
 
-    // Modo local / Fallback
-    const existing = getProfileByEmail(cleanEmail);
-    if (existing) {
+    // Modo demonstração
+    if (getProfileByEmail(cleanEmail)) {
       return { success: false, error: 'Já existe uma conta cadastrada com este e-mail. Faça login.' };
     }
 
+    const now = new Date().toISOString();
     const newProfile: UserProfile = {
       id: `usr-${Date.now()}`,
       email: cleanEmail,
       full_name: params.full_name.trim(),
       phone: params.phone.trim(),
-      role: 'CUSTOMER', // Restrição estrita: sempre cliente!
+      role: 'CUSTOMER',
       is_active: true,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      created_at: now,
+      updated_at: now,
     };
 
     saveProfile(newProfile);
     setActiveProfile(newProfile);
-
     return { success: true, profile: newProfile };
   },
 
   /**
-   * Login por e-mail e senha
+   * Login por e-mail e senha.
    */
-  async signIn(params: SignInParams): Promise<{ success: boolean; profile?: UserProfile; error?: string }> {
+  async signIn(params: SignInParams): Promise<AuthResult> {
     const cleanEmail = params.email.trim().toLowerCase();
 
     if (isSupabaseConfigured && supabase) {
+      if (!params.password) return { success: false, error: 'Informe sua senha.' };
+
       const { data, error } = await supabase.auth.signInWithPassword({
         email: cleanEmail,
-        password: params.password || 'SenhaP@ss123!',
+        password: params.password,
       });
-
-      if (error) {
+      if (error || !data.user) {
         return { success: false, error: 'Credenciais inválidas. Verifique seu e-mail e senha.' };
       }
 
-      if (data.user) {
-        const { data: profile, error: pError } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', data.user.id)
-          .single();
-
-        if (pError || !profile) {
-          return { success: false, error: 'Perfil não encontrado no banco de dados.' };
-        }
-
-        // Bloqueio rigoroso de conta inativa
-        if (!profile.is_active) {
-          await supabase.auth.signOut();
-          setActiveProfile(null);
-          return {
-            success: false,
-            error: 'Sua conta está desativada pela administração. Entre em contato com a hamburgueria.',
-          };
-        }
-
-        const userProfile = profile as UserProfile;
-        setActiveProfile(userProfile);
-        return { success: true, profile: userProfile };
+      const profile = await fetchProfile(data.user.id);
+      if (!profile) {
+        await supabase.auth.signOut();
+        return { success: false, error: 'Perfil não encontrado no banco de dados.' };
       }
+      if (!profile.is_active) {
+        await supabase.auth.signOut();
+        setActiveProfile(null);
+        return {
+          success: false,
+          error: 'Sua conta está desativada pela administração. Entre em contato com a hamburgueria.',
+        };
+      }
+
+      setActiveProfile(profile);
+      return { success: true, profile };
     }
 
-    // Modo local / Fallback
+    // Modo demonstração: contas fictícias locais, sem verificação de senha
     const found = getProfileByEmail(cleanEmail);
     if (!found) {
       return { success: false, error: 'Nenhuma conta encontrada com este e-mail. Cadastre-se primeiro.' };
     }
-
     if (!found.is_active) {
       return {
         success: false,
@@ -198,9 +184,6 @@ export const authService = {
     return { success: true, profile: found };
   },
 
-  /**
-   * Logout do usuário
-   */
   async signOut(): Promise<void> {
     if (isSupabaseConfigured && supabase) {
       try {
@@ -212,9 +195,6 @@ export const authService = {
     setActiveProfile(null);
   },
 
-  /**
-   * Recuperação de senha
-   */
   async resetPassword(email: string): Promise<{ success: boolean; message: string }> {
     const cleanEmail = email.trim().toLowerCase();
 
@@ -222,9 +202,7 @@ export const authService = {
       const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
         redirectTo: `${window.location.origin}/recuperar-senha`,
       });
-      if (error) {
-        return { success: false, message: error.message };
-      }
+      if (error) return { success: false, message: error.message };
     }
 
     return {
@@ -234,15 +212,14 @@ export const authService = {
   },
 
   /**
-   * Administrador cadastra membro da equipe (COZINHA ou ENTREGADOR)
-   * NUNCA pode ser chamado por clientes comuns.
+   * Administrador cadastra membro da equipe (COZINHA ou ENTREGADOR).
+   * No Supabase usa a Edge Function `admin-create-staff`, que valida o papel do chamador.
    */
-  async createStaffMember(params: CreateStaffParams): Promise<{ success: boolean; profile?: UserProfile; error?: string }> {
+  async createStaffMember(params: CreateStaffParams): Promise<AuthResult> {
     const currentUser = getActiveProfile();
     if (!currentUser || currentUser.role !== 'ADMIN') {
       return { success: false, error: 'Apenas administradores podem cadastrar funcionários.' };
     }
-
     if (params.role !== 'KITCHEN' && params.role !== 'DELIVERY') {
       return { success: false, error: 'Função de equipe inválida. Apenas COZINHA ou ENTREGADOR.' };
     }
@@ -250,20 +227,35 @@ export const authService = {
     const cleanEmail = params.email.trim().toLowerCase();
 
     if (isSupabaseConfigured && supabase) {
-      // Chama a função segura RPC admin_create_staff_profile
-      const { data, error } = await supabase.rpc('admin_create_staff_profile', {
-        p_user_id: crypto.randomUUID(),
-        p_email: cleanEmail,
-        p_full_name: params.full_name.trim(),
-        p_phone: params.phone.trim(),
-        p_role: params.role,
-      });
-
-      if (error) {
-        return { success: false, error: error.message };
+      if (!params.password || params.password.length < 8) {
+        return { success: false, error: 'A senha inicial precisa ter pelo menos 8 caracteres.' };
       }
+      const { data, error } = await supabase.functions.invoke('admin-create-staff', {
+        body: {
+          email: cleanEmail,
+          password: params.password,
+          full_name: params.full_name.trim(),
+          phone: params.phone.trim(),
+          role: params.role,
+        },
+      });
+      if (error) {
+        let message = 'Falha ao cadastrar funcionário.';
+        try {
+          const body = await (error as { context?: Response }).context?.json();
+          if (body?.error) message = body.error;
+        } catch {
+          // mantém mensagem padrão
+        }
+        return { success: false, error: message };
+      }
+      return { success: true, profile: data?.profile as UserProfile };
     }
 
+    if (getProfileByEmail(cleanEmail)) {
+      return { success: false, error: 'Já existe uma conta com este e-mail.' };
+    }
+    const now = new Date().toISOString();
     const newStaff: UserProfile = {
       id: `staff-${Date.now()}`,
       email: cleanEmail,
@@ -271,56 +263,29 @@ export const authService = {
       phone: params.phone.trim(),
       role: params.role,
       is_active: true,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      created_at: now,
+      updated_at: now,
     };
-
     saveProfile(newStaff);
     return { success: true, profile: newStaff };
   },
 
-  /**
-   * Administrador ativa ou desativa um usuário
-   */
-  async toggleUserActive(userId: string, isActive: boolean): Promise<{ success: boolean; error?: string }> {
+  async toggleUserActive(userId: string, isActive: boolean): Promise<Result> {
     const currentUser = getActiveProfile();
     if (!currentUser || currentUser.role !== 'ADMIN') {
       return { success: false, error: 'Apenas administradores podem ativar ou desativar contas.' };
     }
-
-    if (isSupabaseConfigured && supabase) {
-      const { error } = await supabase.rpc('admin_toggle_user_status', {
-        p_user_id: userId,
-        p_active: isActive,
-      });
-      if (error) {
-        return { success: false, error: error.message };
-      }
-    }
-
     return toggleUserStatus(userId, isActive);
   },
 
   /**
-   * Procedimento seguro para provisionar o primeiro Administrador
+   * Promove uma conta existente a ADMIN. No Supabase exige que o chamador já seja
+   * ADMIN; o primeiro administrador é criado pelo SQL Editor (ver README).
    */
-  async provisionFirstAdmin(email: string): Promise<{ success: boolean; message: string }> {
-    if (isSupabaseConfigured && supabase) {
-      const { data, error } = await supabase.rpc('provision_initial_admin', {
-        admin_email: email.trim().toLowerCase(),
-      });
-      if (error) {
-        return { success: false, message: error.message };
-      }
-      return { success: true, message: data.message };
-    }
-
+  provisionFirstAdmin(email: string): Promise<{ success: boolean; message: string }> {
     return provisionFirstAdmin(email);
   },
 
-  /**
-   * Rota de redirecionamento por perfil após o login
-   */
   getRedirectPathForRole(role: UserRole): string {
     switch (role) {
       case 'CUSTOMER':
@@ -336,12 +301,11 @@ export const authService = {
     }
   },
 
-  /**
-   * Utilitário para troca rápida de perfil em modo de teste/demonstração
-   */
-  switchRole(role: UserRole): UserProfile {
+  /** Somente modo demonstração: troca rápida de perfil sem login. */
+  switchRole(role: UserRole): UserProfile | null {
+    if (!IS_DEMO_MODE) return null;
     const profiles = getProfiles();
-    const found = profiles.find((p) => p.role === role) || profiles[0];
+    const found = profiles.find((p) => p.role === role && p.is_active) || null;
     setActiveProfile(found);
     return found;
   },

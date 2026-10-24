@@ -22,6 +22,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     subtotalCents,
     discountCents,
     deliveryFeeCents,
+    deliveryAddress,
     totalCents,
     fulfillmentType,
     setFulfillmentType,
@@ -248,7 +249,7 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                 <div className="flex justify-between">
                   <span>Taxa de Entrega</span>
                   <span className="font-semibold">
-                    {fulfillmentType === 'PICKUP' ? 'Grátis (Retirada)' : formatCentsToBRL(deliveryFeeCents)}
+                    {fulfillmentType === 'PICKUP' ? 'Grátis (Retirada)' : deliveryAddress ? formatCentsToBRL(deliveryFeeCents) : 'Calculada no checkout'}
                   </span>
                 </div>
 

@@ -11,62 +11,85 @@ import {
   AlertCircle,
   ExternalLink,
 } from 'lucide-react';
-import { Order, UserProfile, Courier } from '../../types';
+import { Order, Courier } from '../../types';
 import {
   getOrders,
-  getProfiles,
-  getCouriers,
-  getCourierById,
+  getCourierByUserId,
   toggleCourierAvailability,
   subscribeToRealtime,
   updateCourierDeliveryStatus,
-  getActiveProfile,
 } from '../../services/storage';
 import { formatCentsToBRL } from '../../lib/formatters/currency';
 import { formatDateTimeBR } from '../../lib/formatters/date';
+import { reportResult } from '../../lib/reportResult';
+import { useAuth } from '../auth/AuthContext';
 
 export const DeliveryPanel: React.FC = () => {
-  const allProfiles = getProfiles();
-  const defaultCourier = allProfiles.find((p: UserProfile) => p.role === 'DELIVERY') || allProfiles[0];
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'ADMIN';
   const [orders, setOrders] = useState<Order[]>([]);
   const [activeTab, setActiveTab] = useState<'current' | 'history'>('current');
-  const [courier, setCourier] = useState<UserProfile>(getActiveProfile() || defaultCourier);
   const [courierData, setCourierData] = useState<Courier | undefined>(undefined);
 
   const loadDeliveries = () => {
-    const list = getOrders();
-    const currentCourier = getActiveProfile() || defaultCourier;
-    setCourier(currentCourier);
-
-    const cData = getCourierById(currentCourier.id) || getCouriers().find((c) => c.user_id === currentCourier.id);
+    if (!user) return;
+    // Entregador = cadastro em `couriers` vinculado à conta logada
+    const cData = getCourierByUserId(user.id);
     setCourierData(cData);
 
-    // Filtra pedidos atribuídos a este entregador
+    // Admin acompanha todas as entregas atribuídas; entregador só as suas
     setOrders(
-      list.filter(
-        (o) =>
-          o.assigned_courier_id === currentCourier.id ||
-          (cData && o.assigned_courier_id === cData.id)
+      getOrders().filter((o) =>
+        isAdmin ? Boolean(o.assigned_courier_id) : Boolean(cData && o.assigned_courier_id === cData.id)
       )
     );
   };
 
   useEffect(() => {
     loadDeliveries();
-    const unsub = subscribeToRealtime(() => {
+    return subscribeToRealtime(() => {
       loadDeliveries();
     });
-    return unsub;
-  }, []);
+  }, [user?.id]);
 
   const currentDeliveries = orders.filter((o) => o.status !== 'CONCLUIDO' && o.status !== 'CANCELADO');
   const completedDeliveries = orders.filter((o) => o.status === 'CONCLUIDO');
 
-  const handleAction = (orderId: string, action: 'PICKUP' | 'OUT_FOR_DELIVERY' | 'DELIVERED', collected?: boolean) => {
-    if (!courier) return;
-    updateCourierDeliveryStatus(orderId, courier.id, action, collected);
-    loadDeliveries();
+  const handleAction = async (order: Order, action: 'PICKUP' | 'DELIVERED') => {
+    const collectOnDelivery = order.payment_status === 'PAGAMENTO_NA_ENTREGA';
+    if (
+      action === 'DELIVERED' &&
+      collectOnDelivery &&
+      !confirm(`Confirma que recebeu ${formatCentsToBRL(order.total_cents)} do cliente?`)
+    ) {
+      return;
+    }
+    const res = await updateCourierDeliveryStatus(
+      order.id,
+      order.assigned_courier_id ?? '',
+      action,
+      action === 'DELIVERED' && collectOnDelivery
+    );
+    reportResult(res);
   };
+
+  if (!user) return null;
+
+  if (!isAdmin && !courierData) {
+    return (
+      <div className="min-h-screen bg-[#0d0f15] text-white p-6 max-w-xl mx-auto flex items-center">
+        <div className="p-6 rounded-3xl bg-[#141622] border border-amber-500/40 text-center space-y-2 w-full">
+          <AlertCircle className="w-8 h-8 text-amber-400 mx-auto" />
+          <p className="font-bold">Conta ainda não vinculada a um cadastro de entregador</p>
+          <p className="text-xs text-zinc-400">
+            Peça à gerência para vincular sua conta em Admin → Entregadores. Depois disso suas entregas aparecem aqui.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const courierName = courierData?.full_name ?? user.full_name;
 
   const getGpsLink = (addr?: { street: string; number: string; neighborhood: string; city: string }) => {
     if (!addr) return '#';
@@ -105,13 +128,12 @@ export const DeliveryPanel: React.FC = () => {
           </div>
           <div>
             <div className="flex items-center space-x-2">
-              <h1 className="text-lg font-black text-white">{courier.full_name}</h1>
+              <h1 className="text-lg font-black text-white">{courierName}</h1>
               {courierData ? (
                 <button
                   onClick={() => {
                     if (courierData.status === 'ATIVO') {
-                      toggleCourierAvailability(courierData.id);
-                      loadDeliveries();
+                      toggleCourierAvailability(courierData.id).then(reportResult);
                     }
                   }}
                   className={`px-2 py-0.5 rounded text-[10px] font-black uppercase transition cursor-pointer ${
@@ -135,7 +157,7 @@ export const DeliveryPanel: React.FC = () => {
               )}
             </div>
             <p className="text-xs text-zinc-400">
-              {courier.phone} &bull;{' '}
+              {courierData?.phone ?? user.phone} &bull;{' '}
               {courierData?.vehicle_type ? `${courierData.vehicle_type} (${courierData.vehicle_model || ''})` : 'Motoboy Oficial'}
             </p>
           </div>
@@ -280,7 +302,11 @@ export const DeliveryPanel: React.FC = () => {
                       <div className="flex items-center space-x-2">
                         <DollarSign className="w-4 h-4 text-amber-400 shrink-0" />
                         <span>
-                          Cobrar na entrega: <strong>{formatCentsToBRL(order.total_cents)}</strong> ({order.payment_method.replace('_', ' ')})
+                          Cobrar na entrega: <strong>{formatCentsToBRL(order.total_cents)}</strong> (
+                          {order.payment_method === 'CASH_ON_DELIVERY' ? 'Dinheiro' : 'Cartão'})
+                          {order.cash_change_for_cents ? (
+                            <> • Levar troco para <strong>{formatCentsToBRL(order.cash_change_for_cents)}</strong></>
+                          ) : null}
                         </span>
                       </div>
                     </div>
@@ -288,9 +314,14 @@ export const DeliveryPanel: React.FC = () => {
 
                   {/* Operational workflow buttons */}
                   <div className="space-y-2 pt-2">
-                    {order.status === 'PRONTO' || order.status === 'CONFIRMADO' || order.status === 'EM_PREPARACAO' ? (
+                    {order.status === 'CONFIRMADO' || order.status === 'EM_PREPARACAO' || order.status === 'AGUARDANDO_CONFIRMACAO' ? (
+                      <div className="w-full py-3 rounded-2xl bg-zinc-900 border border-zinc-800 text-zinc-400 text-xs font-bold flex items-center justify-center space-x-2">
+                        <Clock className="w-4 h-4" />
+                        <span>Pedido ainda em preparo na cozinha</span>
+                      </div>
+                    ) : order.status === 'PRONTO' ? (
                       <button
-                        onClick={() => handleAction(order.id, 'PICKUP')}
+                        onClick={() => handleAction(order, 'PICKUP')}
                         className="w-full py-3.5 rounded-2xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-black text-xs uppercase tracking-wider flex items-center justify-center space-x-2 shadow-lg shadow-amber-500/20 active:scale-98 cursor-pointer"
                       >
                         <PackageCheck className="w-4 h-4" />
@@ -298,7 +329,7 @@ export const DeliveryPanel: React.FC = () => {
                       </button>
                     ) : order.status === 'EM_ENTREGA' ? (
                       <button
-                        onClick={() => handleAction(order.id, 'DELIVERED', isPaymentOnDelivery)}
+                        onClick={() => handleAction(order, 'DELIVERED')}
                         className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center space-x-2 shadow-lg shadow-emerald-600/30 active:scale-98 cursor-pointer"
                       >
                         <CheckCircle className="w-4 h-4" />

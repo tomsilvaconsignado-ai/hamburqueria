@@ -11,6 +11,10 @@ port = 54322
 shadow_port = 54320
 major_version = 15
 
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]
+
 [studio]
 port = 54323
 
@@ -20,6 +24,13 @@ additional_redirect_urls = ["https://localhost:3000"]
 jwt_expiry = 3600
 enable_signup = true
 
+[auth.email]
+enable_confirmations = true
+
 [storage]
 enabled = true
 file_size_limit = "10MiB"
+
+# O Mercado Pago não envia JWT do Supabase; a função valida a assinatura x-signature.
+[functions.mercadopago-webhook]
+verify_jwt = false

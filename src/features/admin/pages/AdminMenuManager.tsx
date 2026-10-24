@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { reportResult } from '../../../lib/reportResult';
 import {
   Flame,
   Plus,
@@ -146,7 +147,7 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
 
     setUploadLoading(true);
     setUploadError(null);
-    const res = await uploadImageFile(file, 'products');
+    const res = await uploadImageFile(file);
     setUploadLoading(false);
 
     if (!res.success || !res.url) {
@@ -156,7 +157,7 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
     }
   };
 
-  const handleSaveProductForm = (e: React.FormEvent) => {
+  const handleSaveProductForm = async (e: React.FormEvent) => {
     e.preventDefault();
 
     const priceCents = Math.round(parseFloat(formPriceStr.replace(',', '.')) * 100);
@@ -209,14 +210,18 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
       updated_at: new Date().toISOString(),
     };
 
-    saveProduct(productData);
+    const res = await saveProduct(productData);
+    if (!res.success) {
+      alert(res.error || 'Erro ao salvar produto.');
+      return;
+    }
     setIsProductModalOpen(false);
     if (onCloseCreateModal) onCloseCreateModal();
     onReloadData();
   };
 
-  const handleDuplicate = (id: string) => {
-    const res = duplicateProduct(id);
+  const handleDuplicate = async (id: string) => {
+    const res = await duplicateProduct(id);
     if (res.success) {
       onReloadData();
     } else {
@@ -224,9 +229,9 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
     }
   };
 
-  const handleDeleteProductConfirm = () => {
+  const handleDeleteProductConfirm = async () => {
     if (!productToDelete) return;
-    const res = deleteProduct(productToDelete.id);
+    const res = await deleteProduct(productToDelete.id);
     if (!res.success) {
       alert(res.error);
     } else {
@@ -235,20 +240,24 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
     }
   };
 
-  const handleSaveQuickPrice = () => {
+  const handleSaveQuickPrice = async () => {
     if (!quickPriceProduct) return;
     const cents = Math.round(parseFloat(quickPriceInput.replace(',', '.')) * 100);
     if (isNaN(cents) || cents <= 0) {
       alert('Preço inválido.');
       return;
     }
-    saveProduct({ ...quickPriceProduct, price_cents: cents });
+    const res = await saveProduct({ ...quickPriceProduct, price_cents: cents });
+    if (!res.success) {
+      alert(res.error || 'Erro ao atualizar preço.');
+      return;
+    }
     setQuickPriceProduct(null);
     onReloadData();
   };
 
   // Category Actions
-  const handleSaveCategory = (e: React.FormEvent) => {
+  const handleSaveCategory = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!catName.trim()) return;
 
@@ -256,24 +265,29 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
     const slug = catSlug.trim() || catName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
 
     const catData: Category = {
+      ...editingCategory,
       id: catId,
       name: catName.trim(),
       slug,
       description: catDescription.trim(),
       sort_order: Number(catSortOrder) || 1,
-      is_active: true,
+      is_active: editingCategory ? editingCategory.is_active : true,
       created_at: editingCategory ? editingCategory.created_at : new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
-    saveCategory(catData);
+    const res = await saveCategory(catData);
+    if (!res.success) {
+      alert(res.error || 'Erro ao salvar categoria.');
+      return;
+    }
     setIsCategoryModalOpen(false);
     onReloadData();
   };
 
-  const handleDeleteCategoryConfirm = () => {
+  const handleDeleteCategoryConfirm = async () => {
     if (!categoryToDelete) return;
-    const res = deleteCategory(categoryToDelete.id);
+    const res = await deleteCategory(categoryToDelete.id);
     if (!res.success) {
       alert(res.error);
     } else {
@@ -519,7 +533,7 @@ export const AdminMenuManager: React.FC<AdminMenuManagerProps> = ({
                     <div className="flex items-center justify-between gap-1 pt-1">
                       <button
                         onClick={() => {
-                          toggleProductAvailability(prod.id);
+                          toggleProductAvailability(prod.id).then(reportResult);
                           onReloadData();
                         }}
                         className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition cursor-pointer ${

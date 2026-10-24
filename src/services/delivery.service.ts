@@ -2,9 +2,10 @@ import {
   getDeliveryZones,
   calculateDeliveryFee,
   updateCourierDeliveryStatus,
-  getProfiles,
+  getCouriers,
 } from './storage';
-import { DeliveryZone, UserProfile } from '../types';
+import type { Result } from './remote';
+import { Courier, DeliveryZone } from '../types';
 
 export const deliveryService = {
   getZones(): DeliveryZone[] {
@@ -15,8 +16,8 @@ export const deliveryService = {
     return calculateDeliveryFee(neighborhood);
   },
 
-  getActiveCouriers(): UserProfile[] {
-    return getProfiles().filter((p) => p.role === 'DELIVERY' && p.is_active);
+  getActiveCouriers(): Courier[] {
+    return getCouriers().filter((c) => c.status === 'ATIVO');
   },
 
   updateDelivery(
@@ -24,7 +25,7 @@ export const deliveryService = {
     courierId: string,
     action: 'PICKUP' | 'OUT_FOR_DELIVERY' | 'DELIVERED',
     paymentCollected?: boolean
-  ) {
+  ): Promise<Result> {
     return updateCourierDeliveryStatus(orderId, courierId, action, paymentCollected);
   },
 };

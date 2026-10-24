@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { reportResult } from '../../../lib/reportResult';
 import {
   Bike,
   Plus,
@@ -126,7 +127,7 @@ export const AdminCouriersManager: React.FC<AdminCouriersManagerProps> = ({
     setIsModalOpen(true);
   };
 
-  const handleSaveCourierForm = (e: React.FormEvent) => {
+  const handleSaveCourierForm = async (e: React.FormEvent) => {
     e.preventDefault();
 
     const serviceAreas = formServiceAreasStr
@@ -163,11 +164,16 @@ export const AdminCouriersManager: React.FC<AdminCouriersManagerProps> = ({
       updated_at: new Date().toISOString(),
     };
 
-    saveCourier(courierData);
+    const saved = await saveCourier(courierData);
+    if (!saved.success) {
+      alert(saved.error);
+      return;
+    }
 
-    // Se houver usuário selecionado para vincular
-    if (formSelectedUserId) {
-      linkCourierToUser(courierId, formSelectedUserId);
+    // Se houver usuário selecionado para vincular (e o vínculo mudou)
+    if (formSelectedUserId && saved.id && formSelectedUserId !== editingCourier?.user_id) {
+      const linked = await linkCourierToUser(saved.id, formSelectedUserId);
+      if (!linked.success) alert(linked.error);
     }
 
     setIsModalOpen(false);
@@ -175,9 +181,9 @@ export const AdminCouriersManager: React.FC<AdminCouriersManagerProps> = ({
     onReloadData();
   };
 
-  const handleConfirmLink = () => {
+  const handleConfirmLink = async () => {
     if (!linkingCourier || !selectedUserIdToLink) return;
-    const res = linkCourierToUser(linkingCourier.id, selectedUserIdToLink);
+    const res = await linkCourierToUser(linkingCourier.id, selectedUserIdToLink);
     if (!res.success) {
       alert(res.error);
     } else {
@@ -187,9 +193,9 @@ export const AdminCouriersManager: React.FC<AdminCouriersManagerProps> = ({
     }
   };
 
-  const handleDeleteConfirm = () => {
+  const handleDeleteConfirm = async () => {
     if (!courierToDelete) return;
-    const res = deleteCourier(courierToDelete.id);
+    const res = await deleteCourier(courierToDelete.id);
     if (!res.success) {
       alert(res.error);
     } else {
@@ -501,7 +507,7 @@ export const AdminCouriersManager: React.FC<AdminCouriersManagerProps> = ({
                       <>
                         <button
                           onClick={() => {
-                            toggleCourierAvailability(c.id);
+                            toggleCourierAvailability(c.id).then(reportResult);
                             onReloadData();
                           }}
                           className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition cursor-pointer ${
@@ -516,7 +522,7 @@ export const AdminCouriersManager: React.FC<AdminCouriersManagerProps> = ({
 
                         <button
                           onClick={() => {
-                            toggleCourierStatus(c.id, 'INATIVO');
+                            toggleCourierStatus(c.id, 'INATIVO').then(reportResult);
                             onReloadData();
                           }}
                           className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white text-[10px] font-bold transition"
@@ -527,7 +533,7 @@ export const AdminCouriersManager: React.FC<AdminCouriersManagerProps> = ({
 
                         <button
                           onClick={() => {
-                            toggleCourierStatus(c.id, 'BLOQUEADO');
+                            toggleCourierStatus(c.id, 'BLOQUEADO').then(reportResult);
                             onReloadData();
                           }}
                           className="px-2 py-1 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 text-[10px] font-bold transition"
@@ -539,7 +545,7 @@ export const AdminCouriersManager: React.FC<AdminCouriersManagerProps> = ({
                     ) : (
                       <button
                         onClick={() => {
-                          toggleCourierStatus(c.id, 'ATIVO');
+                          toggleCourierStatus(c.id, 'ATIVO').then(reportResult);
                           onReloadData();
                         }}
                         className="px-3 py-1 rounded-lg bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-300 border border-emerald-500/40 text-[10px] font-black uppercase transition cursor-pointer"

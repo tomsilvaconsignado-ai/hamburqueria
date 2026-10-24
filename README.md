@@ -1,77 +1,105 @@
-# Burger Hub & Pittu — Plataforma Completa de Pedidos para Hamburgueria
+# Burger Hub & Pittu — Plataforma de Pedidos para Hamburgueria
 
-Plataforma profissional e escalável de pedidos para hamburgueria artesanal desenvolvida com **React 19**, **TypeScript**, **Tailwind CSS**, e arquitetura **Supabase PostgreSQL** com Row Level Security (RLS) e Realtime.
-
----
-
-## 🍔 1. Módulos da Aplicação
-
-1. **Storefront & Área do Cliente**:
-   - Cardápio interativo e responsivo baseado nas referências visuais de alta gastronomia com tema escuro e brasas incandescentes.
-   - Destaque autoral: **Burger Śpioszek Artesanal** e **Bestsellers** (Burger Czarnuszek, Classic Cheese Burger, Peri Peri Rustic Fries, Chicken Strips).
-   - Modal de personalização com ponto da carne, tipos de pão, turbinadores/adicionais pagos e observações da cozinha.
-   - Carrinho dinâmico com suporte a cupom de desconto promocional (`BEMVINDO20` para 20% OFF).
-   - Checkout completo com opções de **Delivery** e **Retirada no Balcão**.
-   - Integração com **PIX Instantâneo** (QR Code gerado e chave Copia e Cola com timer de 15 minutos), **Cartão de Crédito Online** (com verificação de bandeira), **Cartão na Entrega** e **Dinheiro com Troco**.
-   - Linha do tempo de rastreamento do pedido em tempo real.
-
-2. **Cozinha Operacional (KDS - Kitchen Display System)**:
-   - Painel Kanban com 4 colunas: *Confirmados*, *Em Preparação (Chapa)*, *Prontos na Bancada* e *Retirada/Balcão*.
-   - Timer de preparo em minutos com alertas visuais (Verde < 15m, Amarelo 15-25m, Vermelho > 25m).
-   - Checklist dos adicionais e observações de clientes e alergias alimentares.
-   - Avanço de status com 1 clique sincronizado em tempo real.
-
-3. **Área do Entregador (Motoboy)**:
-   - Interface mobile-first dedicada para o entregador.
-   - Visualização das entregas atribuídas, endereço completo e contato do cliente.
-   - Botões diretos para navegação: **Abrir no Google Maps** e **Abrir no Waze**.
-   - Fluxo de trabalho: *Confirmar Retirada* -> *Sair para Entrega* -> *Confirmar Conclusão e Recebimento de Pagamento*.
-   - Histórico e cálculo de repasse de taxas por corrida do dia.
-
-4. **Painel Administrativo & Gestão**:
-   - KPIs executivos: Faturamento do dia, Pedidos hoje, Ticket Médio, Pedidos ativos e em rota.
-   - Gestão de pedidos com filtros por status e busca.
-   - Atribuição manual de entregadores oficiais aos pedidos prontos.
-   - Controle do cardápio: edição de preços em centavos e alternância de disponibilidade (Disponível/Pausado).
-   - Tabela de zonas de entrega com taxas e bairros atendidos.
-   - Chave mestre de abertura/fechamento da hamburgueria (`is_open`).
-   - Registro imutável de Auditoria (`Audit Logs`).
-
-5. **Barra de Demonstração / Simulador de Pedidos**:
-   - Permite alternar instantaneamente entre qualquer um dos 4 papéis sem necessidade de relogar.
-   - Botão **⚡ Simular Pedido** que cria um novo pedido aleatório no sistema para ver a Cozinha, o Entregador e o Admin atualizarem em tempo real!
+Loja online, carrinho e checkout, tela da cozinha (KDS), painel do entregador e painel administrativo.
+React 19 + TypeScript + Tailwind no frontend; Supabase (PostgreSQL com RLS, Auth, Realtime, Storage e Edge Functions) no backend.
 
 ---
 
-## 🗄️ 2. Banco de Dados & Migrações Supabase
+## 1. Arquitetura
 
-As migrações SQL completas e versionadas estão localizadas na pasta `supabase/migrations/`:
-- `supabase/migrations/20261023000000_initial_schema.sql`: Definição das tabelas (`profiles`, `customer_addresses`, `categories`, `products`, `option_groups`, `product_options`, `orders`, `order_items`, `payments`, `deliveries`, `delivery_zones`, `store_settings`, `order_status_history`, `notifications`, `audit_logs`), enums, restrições e índices.
-- `supabase/migrations/20261023000001_rls_policies_and_functions.sql`: Ativação de Row Level Security (RLS) em todas as tabelas e funções de segurança (`get_current_user_role()`, `is_admin()`, `is_kitchen()`, `is_courier()`).
+```
+Navegador (SPA)                         Supabase
+───────────────                         ────────
+storage.ts  (fachada: leituras síncronas do cache, escritas assíncronas)
+  ├─ modo Supabase → remote.ts ───────► RPCs SECURITY DEFINER (create_order, update_order_status,
+  │                                     admin_assign_courier, courier_update_delivery, ...)
+  │                  ◄── Realtime ────── postgres_changes (orders, products, couriers, ...)
+  └─ modo demonstração → localStorage   (sem Supabase configurado)
 
----
+payment.service.ts ──────────────────► Edge Function create-payment ──► Mercado Pago
+                                       Edge Function mercadopago-webhook ◄── Mercado Pago
+auth.service.ts (cadastro de equipe) ─► Edge Function admin-create-staff (service_role)
+```
 
-## ⚙️ 3. Como Executar Localmente
+Regras importantes:
+
+- **O navegador não é confiável.** Preço, opcionais, cupom, taxa de entrega e número do pedido são recalculados
+  no banco pela função `create_order`. Pedidos e pagamentos não aceitam INSERT/UPDATE direto de usuários.
+- **Máquina de estados no banco.** A trigger `enforce_order_status_transition` impede pular etapas, confirmar
+  pedido online não pago e despachar sem entregador. `update_order_status` aplica a permissão por papel.
+- **Pagamento online só vira `PAGO` pelo webhook**, que valida a assinatura do Mercado Pago e confere o valor.
+- **Entregador vê apenas os pedidos atribuídos a ele** (RLS via vínculo `couriers.user_id`).
+- **Acompanhamento de convidado** usa um token aleatório guardado como hash (`guest_token_hash`); o número
+  do pedido sozinho não dá acesso.
+
+Fluxo do pedido:
+
+```
+AGUARDANDO_CONFIRMACAO → CONFIRMADO → EM_PREPARACAO → PRONTO ─┬─ (retirada) → AGUARDANDO_RETIRADA → CONCLUIDO
+        (online: só após PAGO)                                └─ (delivery, com entregador) → EM_ENTREGA → CONCLUIDO
+Cancelamento: admin (com motivo) a qualquer momento antes de concluir; cliente só até CONFIRMADO.
+```
+
+## 2. Modo demonstração
+
+Sem `VITE_SUPABASE_URL`/`VITE_SUPABASE_ANON_KEY`, o app roda com dados fictícios salvos **apenas no navegador**,
+com seletor de perfis e simulador de pedidos. Serve para apresentar o produto, **não para operar a loja**:
+cozinha e entregador em outros aparelhos não veem os pedidos. O pipeline de deploy recusa publicar sem as variáveis.
+
+## 3. Desenvolvimento local
 
 ```bash
-# 1. Instalar dependências
-npm install
-
-# 2. Iniciar servidor de desenvolvimento (Porta 3000)
-npm run dev
-
-# 3. Compilar para produção
+npm ci
+npm run dev        # http://localhost:3000 (modo demonstração se não houver .env.local)
+npm run lint       # checagem de tipos
+npm test           # testes (Vitest)
 npm run build
 ```
 
----
+Para usar o Supabase local: instale a [Supabase CLI](https://supabase.com/docs/guides/cli), rode
+`supabase start` e `supabase db reset` (aplica as migrações e o `supabase/seed.sql`), e crie `.env.local`
+a partir de `.env.example` com a URL e a anon key exibidas pelo `supabase start`.
 
-## 🔒 4. Variáveis de Ambiente (.env)
+## 4. Implantação em produção
 
-Crie um arquivo `.env` baseado no `.env.example`:
-```env
-VITE_SUPABASE_URL="https://seu-projeto.supabase.co"
-VITE_SUPABASE_ANON_KEY="sua-chave-anonima"
-```
+1. **Banco**: `supabase link --project-ref <ref>` e `supabase db push`. Rode o conteúdo de
+   `supabase/seed.sql` uma vez no SQL Editor para carregar o cardápio inicial (ou cadastre pelo painel).
+2. **Primeiro administrador**: cadastre a conta pelo site e, no SQL Editor (como `postgres`), execute
+   `select public.provision_initial_admin('seu-email@dominio.com');`. Os demais admins são promovidos pelo
+   painel (Admin → Usuários).
+3. **Edge Functions**:
+   ```bash
+   supabase functions deploy create-payment
+   supabase functions deploy admin-create-staff
+   supabase functions deploy mercadopago-webhook --no-verify-jwt
+   supabase secrets set MP_ACCESS_TOKEN=... MP_WEBHOOK_SECRET=... SITE_URL=https://seu-dominio
+   ```
+   No Mercado Pago, cadastre o webhook (evento *Pagamentos*) apontando para
+   `https://<ref>.supabase.co/functions/v1/mercadopago-webhook`.
+   Só depois disso habilite **Pix Online** e **Cartão Online** em Admin → Configurações (o seed deixa apenas
+   pagamento na entrega habilitado).
+4. **Auth**: em Authentication → URL Configuration, defina o Site URL e as Redirect URLs do domínio.
+5. **Frontend (Azure Static Web Apps)**: crie o recurso Static Web App e, no GitHub
+   (Settings → Secrets and variables → Actions), configure:
+   - Secrets: `AZURE_STATIC_WEB_APPS_API_TOKEN`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`
+   - Variable: `DEPLOY_ENABLED=true`
 
-A aplicação conta com um motor transacional persistente local (localStorage) que garante funcionamento imediato de todos os fluxos e botões mesmo sem credenciais do Supabase configuradas, migrando automaticamente para o Supabase quando as variáveis forem inseridas.
+   O workflow `.github/workflows/ci.yml` roda typecheck, testes e build em todo push/PR e publica na `main`
+   apenas se o CI passar. `public/staticwebapp.config.json` faz o fallback das rotas da SPA para `index.html`.
+
+## 5. Estrutura
+
+| Caminho | Conteúdo |
+| --- | --- |
+| `src/services/storage.ts` | Fachada de dados + backend local do modo demonstração |
+| `src/services/remote.ts` | Integração Supabase (leituras, Realtime, RPCs, escritas do admin) |
+| `src/services/orderStateMachine.ts` | Regras de transição de status (espelho das regras do banco) |
+| `supabase/migrations/` | Esquema, RLS, trigger de estados e funções transacionais |
+| `supabase/functions/` | Pagamento (Mercado Pago), webhook e criação de funcionários |
+| `docs/` | Prompt original do projeto e referências visuais |
+
+## 6. Limitações conhecidas
+
+- Endereços salvos em "Minha Conta" ainda são apenas visuais (não persistem na tabela `customer_addresses`).
+- O painel carrega os 300 pedidos mais recentes; relatórios de períodos longos precisam de consultas paginadas.
+- Notificações (tabela `notifications`) ainda não são enviadas; o acompanhamento é feito pelo Realtime.

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Plus, Minus, ShoppingBag, Sliders, Check } from 'lucide-react';
 import { Product } from '../../types';
-import { formatCentsToBRL } from '../../lib/formatters/currency';
+import { formatCentsToBRL, getEffectivePriceCents } from '../../lib/formatters/currency';
 import { useCart } from '../cart/CartContext';
 
 interface ProductCardProps {
@@ -60,7 +60,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
       <div className="flex items-center justify-between mb-3">
         <div className="px-3 py-1 rounded-xl bg-zinc-900/90 border border-zinc-700/60 shadow-inner">
           <span className="text-base font-extrabold text-amber-400 font-['Bebas_Neue',sans-serif] tracking-wide">
-            {formatCentsToBRL(product.price_cents)}
+            {formatCentsToBRL(getEffectivePriceCents(product))}
           </span>
         </div>
 

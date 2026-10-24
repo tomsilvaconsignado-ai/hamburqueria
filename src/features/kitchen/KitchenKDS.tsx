@@ -13,9 +13,13 @@ import {
 } from 'lucide-react';
 import { Order, OrderStatus } from '../../types';
 import { getOrders, subscribeToRealtime, updateOrderStatus } from '../../services/storage';
+import { getNextStatus, isOnlinePayment } from '../../services/orderStateMachine';
 import { formatTimeBR, getElapsedMinutes } from '../../lib/formatters/date';
+import { reportResult } from '../../lib/reportResult';
+import { useAuth } from '../auth/AuthContext';
 
 export const KitchenKDS: React.FC = () => {
+  const { user } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
   const [soundEnabled, setSoundEnabled] = useState(true);
 
@@ -41,15 +45,22 @@ export const KitchenKDS: React.FC = () => {
     return unsub;
   }, []);
 
-  const handleAdvanceStatus = (orderId: string, currentStatus: OrderStatus) => {
-    let next: OrderStatus = 'EM_PREPARACAO';
-    if (currentStatus === 'AGUARDANDO_CONFIRMACAO') next = 'CONFIRMADO';
-    else if (currentStatus === 'CONFIRMADO') next = 'EM_PREPARACAO';
-    else if (currentStatus === 'EM_PREPARACAO') next = 'PRONTO';
-    else if (currentStatus === 'PRONTO') next = 'AGUARDANDO_RETIRADA';
-    else if (currentStatus === 'AGUARDANDO_RETIRADA') next = 'CONCLUIDO';
+  // Pedido de delivery pronto sai da cozinha pelo entregador (ação dele no painel)
+  const kitchenCanAdvance = (order: Order) =>
+    !(order.status === 'PRONTO' && order.fulfillment_type === 'DELIVERY') &&
+    !(order.status === 'AGUARDANDO_CONFIRMACAO' && isOnlinePayment(order) && order.payment_status !== 'PAGO');
 
-    updateOrderStatus(orderId, next, 'KITCHEN', 'Chef André Silva (KDS)', 'Avanço pelo painel da cozinha');
+  const handleAdvanceStatus = async (order: Order) => {
+    const next: OrderStatus | null = getNextStatus(order);
+    if (!next || !kitchenCanAdvance(order)) return;
+    const res = await updateOrderStatus(
+      order.id,
+      next,
+      user?.role ?? 'KITCHEN',
+      user?.full_name ?? 'Cozinha',
+      'Avanço pelo painel da cozinha'
+    );
+    reportResult(res);
   };
 
   // Grupos por coluna Kanban
@@ -162,8 +173,23 @@ export const KitchenKDS: React.FC = () => {
 
         {/* Action Button */}
         <div className="pt-3 border-t border-zinc-800/80">
+          {!kitchenCanAdvance(order) ? (
+            <div className="w-full py-2.5 rounded-xl text-xs font-bold text-center bg-zinc-900 border border-zinc-800 text-zinc-400 flex items-center justify-center space-x-1.5">
+              {order.status === 'PRONTO' ? (
+                <>
+                  <Bike className="w-4 h-4" />
+                  <span>{order.assigned_courier_name ? `Aguardando ${order.assigned_courier_name}` : 'Aguardando entregador'}</span>
+                </>
+              ) : (
+                <>
+                  <Clock className="w-4 h-4" />
+                  <span>Aguardando pagamento online</span>
+                </>
+              )}
+            </div>
+          ) : (
           <button
-            onClick={() => handleAdvanceStatus(order.id, order.status)}
+            onClick={() => handleAdvanceStatus(order)}
             className="w-full py-2.5 rounded-xl font-black text-xs uppercase tracking-wider flex items-center justify-center space-x-1.5 transition active:scale-98 cursor-pointer shadow-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 shadow-amber-500/20"
           >
             {order.status === 'AGUARDANDO_CONFIRMACAO' && (
@@ -187,7 +213,7 @@ export const KitchenKDS: React.FC = () => {
             {order.status === 'PRONTO' && (
               <>
                 <CheckCircle className="w-4 h-4" />
-                <span>Liberar para Coleta</span>
+                <span>Liberar no Balcão</span>
               </>
             )}
             {order.status === 'AGUARDANDO_RETIRADA' && (
@@ -197,6 +223,7 @@ export const KitchenKDS: React.FC = () => {
               </>
             )}
           </button>
+          )}
         </div>
       </div>
     );

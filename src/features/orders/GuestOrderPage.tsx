@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Order, OrderStatus } from '../../types';
-import { getOrders, subscribeToRealtime } from '../../services/storage';
+import { getOrderByGuestToken, loadOrderByGuestToken, subscribeToRealtime } from '../../services/storage';
 import { formatCentsToBRL } from '../../lib/formatters/currency';
 import { formatDateTimeBR } from '../../lib/formatters/date';
 import {
@@ -20,26 +20,28 @@ import {
 export const GuestOrderPage: React.FC = () => {
   const { token } = useParams<{ token: string }>();
   const [order, setOrder] = useState<Order | null>(null);
-
-  const loadOrder = () => {
-    if (!token) return;
-    const all = getOrders();
-    const found = all.find(
-      (o) =>
-        o.id === token ||
-        o.order_number.toLowerCase() === token.toLowerCase() ||
-        o.guest_access_token === token
-    );
-    setOrder(found || null);
-  };
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadOrder();
-    const unsub = subscribeToRealtime(() => {
-      loadOrder();
+    if (!token) return;
+    // Somente o token secreto do link dá acesso (número do pedido é sequencial e adivinhável)
+    setLoading(true);
+    loadOrderByGuestToken(token).then((found) => {
+      setOrder(found ?? null);
+      setLoading(false);
     });
-    return unsub;
+    return subscribeToRealtime(() => {
+      setOrder(getOrderByGuestToken(token) ?? null);
+    });
   }, [token]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#0a0c12] text-zinc-400 flex items-center justify-center text-xs">
+        Carregando pedido...
+      </div>
+    );
+  }
 
   if (!order) {
     return (
@@ -48,7 +50,7 @@ export const GuestOrderPage: React.FC = () => {
           <AlertCircle className="w-12 h-12 text-amber-500 mx-auto" />
           <h2 className="text-xl font-bold">Pedido Não Localizado</h2>
           <p className="text-xs text-zinc-400">
-            Não encontramos nenhum pedido correspondente ao código informado ({token}).
+            Não encontramos nenhum pedido para este link. Confira se o endereço foi copiado por completo.
           </p>
           <Link
             to="/"

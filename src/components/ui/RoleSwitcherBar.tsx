@@ -33,7 +33,7 @@ export const RoleSwitcherBar: React.FC<RoleSwitcherBarProps> = ({
       const randomName = names[Math.floor(Math.random() * names.length)];
       const randomNeigh = neighborhoods[Math.floor(Math.random() * neighborhoods.length)];
 
-      await orderService.createOrder({
+      const res = await orderService.createOrder({
         customer_name: randomName,
         customer_phone: '(11) 9' + Math.floor(10000000 + Math.random() * 90000000),
         fulfillment_type: 'DELIVERY',
@@ -87,10 +87,14 @@ export const RoleSwitcherBar: React.FC<RoleSwitcherBarProps> = ({
             total_price_cents: 4540,
           },
         ],
-        payment_method: 'PIX_ONLINE',
+        payment_method: 'CASH_ON_DELIVERY',
         customer_notes: 'Campainha está com defeito, bater no portão.',
       });
 
+      if (!res.success) {
+        alert(res.error);
+        return;
+      }
       if (onOrderCreatedNotification) onOrderCreatedNotification();
     } catch (e) {
       console.error(e);
@@ -106,7 +110,10 @@ export const RoleSwitcherBar: React.FC<RoleSwitcherBarProps> = ({
       <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center space-x-2">
           <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-black tracking-wider uppercase bg-amber-500/20 text-amber-300 border border-amber-500/30">
-            SIMULAÇÃO DE PERFIS & RLS
+            MODO DEMONSTRAÇÃO
+          </span>
+          <span className="hidden md:inline text-[10px] text-zinc-500">
+            Dados fictícios, salvos só neste navegador
           </span>
           <span className="hidden sm:inline text-zinc-400">
             {user ? (

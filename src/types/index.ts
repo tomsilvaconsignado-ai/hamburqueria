@@ -180,6 +180,8 @@ export interface Order {
   delivery_fee_cents: number;
   total_cents: number;
   customer_notes?: string;
+  coupon_code?: string;
+  cash_change_for_cents?: number; // troco solicitado (pagamento em dinheiro)
   cancellation_reason?: string;
   estimated_delivery_time?: string;
   items: OrderItem[];

@@ -3,6 +3,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import { Flame, Mail, Lock, AlertCircle, ArrowRight, Sparkles, User, ChefHat, Bike, ShieldCheck } from 'lucide-react';
 import { authService } from '../../services/auth.service';
+import { IS_DEMO_MODE } from '../../services/storage';
 
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
@@ -161,7 +162,8 @@ export const LoginPage: React.FC = () => {
             </p>
           </div>
 
-          {/* Quick Demo Access Switcher */}
+          {/* Quick Demo Access Switcher (somente sem Supabase configurado) */}
+          {IS_DEMO_MODE && (
           <div className="pt-4 border-t border-zinc-800/80 space-y-3">
             <div className="flex items-center space-x-1.5 text-xs text-zinc-400">
               <Sparkles className="w-3.5 h-3.5 text-amber-400" />
@@ -218,6 +220,7 @@ export const LoginPage: React.FC = () => {
               </button>
             </div>
           </div>
+          )}
         </div>
       </div>
     </div>

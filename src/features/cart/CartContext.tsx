@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { CartItem, Product, SelectedOption, FulfillmentType, OrderAddressSnapshot } from '../../types';
 import { calculateDeliveryFee } from '../../services/storage';
+import { getEffectivePriceCents } from '../../lib/formatters/currency';
 
 interface CartContextType {
   items: CartItem[];
@@ -19,6 +20,8 @@ interface CartContextType {
   deliveryAddress: OrderAddressSnapshot | null;
   setDeliveryAddress: (addr: OrderAddressSnapshot | null) => void;
   deliveryFeeCents: number;
+  /** false quando o bairro informado não pertence a nenhuma zona de entrega ativa */
+  deliveryZoneFound: boolean;
   totalCents: number;
   isCartOpen: boolean;
   setIsCartOpen: (open: boolean) => void;
@@ -40,20 +43,10 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
 
   const [fulfillmentType, setFulfillmentType] = useState<FulfillmentType>('DELIVERY');
-  const [appliedCoupon, setAppliedCoupon] = useState<string | null>('BEMVINDO20'); // Pre-loaded with welcome promo from banner
-  const [couponCode, setCouponCode] = useState<string>('BEMVINDO20');
-  const [deliveryAddress, setDeliveryAddress] = useState<OrderAddressSnapshot | null>({
-    recipient_name: 'Lucas Ferreira',
-    recipient_phone: '(11) 99876-5432',
-    postal_code: '01311-000',
-    street: 'Av. Paulista',
-    number: '1200',
-    complement: 'Apt 142',
-    neighborhood: 'Bela Vista',
-    city: 'São Paulo',
-    state: 'SP',
-    reference: 'Próximo ao MASP',
-  });
+  // Cupom é aplicado pelo cliente; validade (ex.: só primeiro pedido) é conferida no servidor
+  const [appliedCoupon, setAppliedCoupon] = useState<string | null>(null);
+  const [couponCode, setCouponCode] = useState<string>('');
+  const [deliveryAddress, setDeliveryAddress] = useState<OrderAddressSnapshot | null>(null);
   const [isCartOpen, setIsCartOpen] = useState(false);
 
   useEffect(() => {
@@ -66,7 +59,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     selectedOptions: SelectedOption[],
     notes?: string
   ) => {
-    let unitPrice = product.price_cents;
+    let unitPrice = getEffectivePriceCents(product);
     selectedOptions.forEach((opt) => {
       unitPrice += opt.unit_price_delta_cents * (opt.quantity || 1);
     });
@@ -133,12 +126,11 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const discountCents = appliedCoupon === 'BEMVINDO20' ? Math.round(subtotalCents * 0.2) : 0;
 
-  const deliveryFeeCents =
-    fulfillmentType === 'PICKUP'
-      ? 0
-      : deliveryAddress
-      ? calculateDeliveryFee(deliveryAddress.neighborhood).fee_cents
-      : 790;
+  // Prévia: o servidor recalcula a taxa pela zona do bairro ao criar o pedido
+  const feePreview =
+    fulfillmentType === 'DELIVERY' && deliveryAddress ? calculateDeliveryFee(deliveryAddress.neighborhood) : null;
+  const deliveryZoneFound = fulfillmentType === 'PICKUP' || Boolean(feePreview?.zone);
+  const deliveryFeeCents = feePreview?.fee_cents ?? 0;
 
   const totalCents = Math.max(0, subtotalCents - discountCents + deliveryFeeCents);
 
@@ -163,6 +155,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         deliveryAddress,
         setDeliveryAddress,
         deliveryFeeCents,
+        deliveryZoneFound,
         totalCents,
         isCartOpen,
         setIsCartOpen,
