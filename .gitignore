@@ -9,3 +9,4 @@ coverage/
 supabase/.temp/
 supabase/.branches/
 .aistudio/
+!.env.production

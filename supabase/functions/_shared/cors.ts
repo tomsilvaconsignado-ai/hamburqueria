@@ -1,5 +1,7 @@
 // Cabeçalhos CORS compartilhados pelas Edge Functions chamadas pelo navegador.
-const allowedOrigin = Deno.env.get('SITE_URL') ?? '*';
+// SITE_URL pode conter caminho (ex.: GitHub Pages em /hamburqueria); CORS usa só a origem.
+const siteUrl = Deno.env.get('SITE_URL');
+const allowedOrigin = siteUrl ? new URL(siteUrl).origin : '*';
 
 export const corsHeaders = {
   'Access-Control-Allow-Origin': allowedOrigin,

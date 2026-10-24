@@ -84,8 +84,8 @@ a partir de `.env.example` com a URL e a anon key exibidas pelo `supabase start`
 5. **Frontend (GitHub Pages)**:
    - Em Settings → Pages → Build and deployment, selecione **Source = GitHub Actions**. Com "Deploy from a
      branch", o Pages publica o código-fonte sem compilar e a página fica em branco.
-   - Em Settings → Secrets and variables → Actions, crie `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY`.
-     Sem eles o site é publicado em modo demonstração.
+   - A URL do Supabase e a anon key (públicas) ficam em `.env.production`. O workflow recusa publicar sem elas,
+     para o site nunca ir ao ar em modo demonstração. Nunca coloque a `service_role` nesse arquivo.
 
    O workflow `.github/workflows/ci.yml` roda typecheck, testes e build em todo push/PR e, na `main`, compila
    com `base=/hamburqueria/` e publica no Pages. O `404.html` (cópia do `index.html`) permite recarregar
