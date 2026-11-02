@@ -16,8 +16,18 @@ import {
   X,
   Printer,
   ChevronRight,
+  LayoutGrid,
+  List,
+  MessageCircle,
 } from 'lucide-react';
-import { Order, OrderStatus, Courier } from '../../../types';
+import { Order, OrderStatus, Courier, StoreSettings } from '../../../types';
+import { STATUS_LABEL, STATUS_STYLE, PAYMENT_METHOD_LABEL, PAYMENT_STATUS_LABEL } from '../../../lib/labels';
+import { buildOrderMessage, suggestedMessageFor, waLink } from '../../../lib/whatsapp';
+import { printOrdersReport } from '../../../lib/documents/templates';
+import { OrderDetailsModal } from '../components/OrderDetailsModal';
+import { OrderBoard } from '../components/OrderBoard';
+import { PeriodPicker, Period, periodFor, formatPeriod } from '../components/PeriodPicker';
+import { localDate } from '../../../services/admin.service';
 import {
   updateOrderStatus,
   assignCourierToOrder,
@@ -33,21 +43,42 @@ import { isOnlinePayment } from '../../../services/orderStateMachine';
 interface AdminOrdersManagerProps {
   orders: Order[];
   couriers: Courier[];
+  settings: StoreSettings;
   onReloadData: () => void;
 }
+
+const VIEW_KEY = 'bh_admin_orders_view_v1';
 
 export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
   orders,
   couriers,
+  settings,
   onReloadData,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [typeFilter, setTypeFilter] = useState<'ALL' | 'DELIVERY' | 'PICKUP'>('ALL');
-  const [dateFilter, setDateFilter] = useState<'ALL' | 'TODAY' | 'WEEK'>('ALL');
+  const [period, setPeriod] = useState<Period>(() => periodFor('7D'));
+  const [view, setView] = useState<'board' | 'list'>(() => {
+    try {
+      return localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'board';
+    } catch {
+      return 'board';
+    }
+  });
+  const chooseView = (v: 'board' | 'list') => {
+    setView(v);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      // só nesta sessão
+    }
+  };
 
-  // Modal Detailed Order View
-  const [selectedOrderDetails, setSelectedOrderDetails] = useState<Order | null>(null);
+  // Detalhes: guarda só o id para sempre mostrar a versão mais nova (Realtime)
+  const [detailsId, setDetailsId] = useState<string | null>(null);
+  const selectedOrderDetails = orders.find((o) => o.id === detailsId) ?? null;
+  const setSelectedOrderDetails = (o: Order | null) => setDetailsId(o?.id ?? null);
 
   // Modal Courier Assignment
   const [assigningOrderId, setAssigningOrderId] = useState<string | null>(null);
@@ -58,20 +89,29 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
   const [cancellationReason, setCancellationReason] = useState<string>('');
   const [cancelError, setCancelError] = useState<string | null>(null);
 
-  // Filter orders
+  // Filtros: busca (número, cliente, telefone com ou sem máscara, bairro), status, tipo e período
+  const query = searchQuery.trim().toLowerCase();
+  const queryDigits = query.replace(/\D/g, '');
   const filteredOrders = orders.filter((o) => {
     const matchesStatus = statusFilter === 'ALL' || o.status === statusFilter;
     const matchesType = typeFilter === 'ALL' || o.fulfillment_type === typeFilter;
+    const day = localDate(new Date(o.created_at));
+    const matchesPeriod = day >= period.from && day <= period.to;
     const matchesSearch =
-      !searchQuery ||
-      o.order_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      o.customer_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      o.customer_phone.includes(searchQuery) ||
-      (o.delivery_address_snapshot &&
-        o.delivery_address_snapshot.neighborhood.toLowerCase().includes(searchQuery.toLowerCase()));
+      !query ||
+      o.order_number.toLowerCase().includes(query) ||
+      o.customer_name.toLowerCase().includes(query) ||
+      (queryDigits.length >= 3 && o.customer_phone.replace(/\D/g, '').includes(queryDigits)) ||
+      (o.delivery_address_snapshot && o.delivery_address_snapshot.neighborhood.toLowerCase().includes(query));
 
-    return matchesStatus && matchesType && matchesSearch;
+    return matchesStatus && matchesType && matchesPeriod && matchesSearch;
   });
+  // O quadro mostra todo pedido em andamento (mesmo de dias anteriores), sem o filtro de período
+  const boardOrders = orders.filter(
+    (o) =>
+      (typeFilter === 'ALL' || o.fulfillment_type === typeFilter) &&
+      (!query || o.order_number.toLowerCase().includes(query) || o.customer_name.toLowerCase().includes(query))
+  );
 
   const handleUpdateStatus = async (orderId: string, nextStatus: OrderStatus) => {
     const res = await updateOrderStatus(orderId, nextStatus, 'ADMIN', 'Administrador', 'Atualização no painel administrativo');
@@ -122,16 +162,47 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
           </p>
         </div>
 
-        <button
-          onClick={() => {
-            const csv = exportOrdersToCSV(orders);
-            downloadCSV(`pedidos-burgerhub-${new Date().toISOString().slice(0, 10)}.csv`, csv);
-          }}
-          className="flex items-center space-x-1.5 px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-xs border border-zinc-700 transition cursor-pointer shadow-md"
-        >
-          <Download className="w-4 h-4 text-emerald-400" />
-          <span>Exportar Pedidos (CSV)</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex bg-zinc-950 border border-zinc-800 rounded-xl p-1" role="group" aria-label="Visualização">
+            <button
+              type="button"
+              aria-pressed={view === 'board'}
+              onClick={() => chooseView('board')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer ${view === 'board' ? 'bg-amber-500 text-zinc-950' : 'text-zinc-400 hover:text-white'}`}
+            >
+              <LayoutGrid className="w-4 h-4" /> Painel operacional
+            </button>
+            <button
+              type="button"
+              aria-pressed={view === 'list'}
+              onClick={() => chooseView('list')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer ${view === 'list' ? 'bg-amber-500 text-zinc-950' : 'text-zinc-400 hover:text-white'}`}
+            >
+              <List className="w-4 h-4" /> Histórico
+            </button>
+          </div>
+          {view === 'list' && (
+            <>
+              <button
+                onClick={() => printOrdersReport(filteredOrders, settings, `${formatPeriod(period)} · ${statusFilter === 'ALL' ? 'todos os status' : STATUS_LABEL[statusFilter as OrderStatus]}`)}
+                className="flex items-center space-x-1.5 px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-xs border border-zinc-700 transition cursor-pointer shadow-md"
+              >
+                <Printer className="w-4 h-4 text-amber-400" />
+                <span>Imprimir / PDF</span>
+              </button>
+              <button
+                onClick={() => {
+                  const csv = exportOrdersToCSV(filteredOrders);
+                  downloadCSV(`pedidos-burgerhub-${period.from}-a-${period.to}.csv`, csv);
+                }}
+                className="flex items-center space-x-1.5 px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-xs border border-zinc-700 transition cursor-pointer shadow-md"
+              >
+                <Download className="w-4 h-4 text-emerald-400" />
+                <span>Exportar CSV</span>
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Filters Bar */}
@@ -148,23 +219,23 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {view === 'list' && <PeriodPicker value={period} onChange={setPeriod} presets={['TODAY', '7D', '30D', 'MONTH']} />}
+          {view === 'list' && (
           <div className="flex items-center space-x-1">
             <Filter className="w-4 h-4 text-zinc-400" />
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
+              aria-label="Status"
               className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500"
             >
-              <option value="ALL">Todos os Status</option>
-              <option value="AGUARDANDO_CONFIRMACAO">Aguardando Confirmação</option>
-              <option value="CONFIRMADO">Confirmado</option>
-              <option value="EM_PREPARACAO">Em Preparação</option>
-              <option value="PRONTO">Pronto para Despacho</option>
-              <option value="EM_ENTREGA">Em Entrega</option>
-              <option value="CONCLUIDO">Concluído</option>
-              <option value="CANCELADO">Cancelado</option>
+              <option value="ALL">Todos os status</option>
+              {(Object.keys(STATUS_LABEL) as OrderStatus[]).map((s) => (
+                <option key={s} value={s}>{STATUS_LABEL[s]}</option>
+              ))}
             </select>
           </div>
+          )}
 
           <select
             value={typeFilter}
@@ -178,7 +249,19 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
         </div>
       </div>
 
-      {/* Orders Table */}
+      {view === 'board' ? (
+        <OrderBoard
+          orders={boardOrders}
+          onOpen={setSelectedOrderDetails}
+          onAdvance={(o, next) => handleUpdateStatus(o.id, next)}
+          onAssign={(o) => setAssigningOrderId(o.id)}
+        />
+      ) : (
+      <>
+      <p className="text-[11px] text-zinc-500 -mt-3">
+        {filteredOrders.length} pedido(s) em {formatPeriod(period)}. A lista mostra os 300 pedidos mais recentes; para meses
+        anteriores use Financeiro e Clientes, que consultam o histórico completo.
+      </p>
       <div className="rounded-3xl bg-[#141620] border border-zinc-800 overflow-hidden shadow-xl">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
@@ -266,7 +349,7 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                         {formatCentsToBRL(order.total_cents)}
                       </span>
                       <span className="text-[10px] text-zinc-400 block">
-                        {order.payment_method.replace(/_/g, ' ')}
+                        {PAYMENT_METHOD_LABEL[order.payment_method]}
                       </span>
                       <span
                         className={`text-[9px] font-bold uppercase ${
@@ -275,24 +358,16 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                             : 'text-amber-400'
                         }`}
                       >
-                        {order.payment_status}
+                        {PAYMENT_STATUS_LABEL[order.payment_status]}
                       </span>
                     </td>
 
                     {/* Status Badge */}
                     <td className="p-4">
                       <span
-                        className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider inline-block ${
-                          order.status === 'CONCLUIDO'
-                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                            : order.status === 'CANCELADO'
-                            ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
-                            : order.status === 'EM_PREPARACAO'
-                            ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
-                            : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                        }`}
+                        className={`px-2.5 py-1 rounded-lg border text-[10px] font-black uppercase tracking-wider inline-block ${STATUS_STYLE[order.status]}`}
                       >
-                        {order.status.replace(/_/g, ' ')}
+                        {STATUS_LABEL[order.status]}
                       </span>
                       {order.cancellation_reason && (
                         <span className="block text-[10px] text-rose-300/90 italic mt-0.5 max-w-[150px] truncate">
@@ -339,6 +414,18 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                         <Eye className="w-3.5 h-3.5" />
                         <span>Ver</span>
                       </button>
+                      {waLink(order.customer_phone) && (
+                        <a
+                          href={waLink(order.customer_phone, buildOrderMessage(order, suggestedMessageFor(order.status, order.fulfillment_type), settings.store_name)) ?? undefined}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-2 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 text-[10px] font-bold transition inline-flex items-center"
+                          title="Abrir WhatsApp com a mensagem da etapa atual (você confere e envia)"
+                          aria-label={`WhatsApp de ${order.customer_name}`}
+                        >
+                          <MessageCircle className="w-3.5 h-3.5" />
+                        </a>
+                      )}
 
                       {order.status !== 'CONCLUIDO' && order.status !== 'CANCELADO' && (
                         <div className="inline-flex space-x-1">
@@ -422,133 +509,11 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
           </table>
         </div>
       </div>
+      </>
+      )}
 
-      {/* Modal: Detailed Order View */}
       {selectedOrderDetails && (
-        <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-3xl max-w-xl w-full p-6 space-y-4 my-8 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
-              <div>
-                <span className="text-xl font-black font-['Bebas_Neue',sans-serif] text-amber-400">
-                  {selectedOrderDetails.order_number}
-                </span>
-                <p className="text-xs text-zinc-400">
-                  Realizado em {formatDateTimeBR(selectedOrderDetails.created_at)}
-                </p>
-              </div>
-              <button
-                onClick={() => setSelectedOrderDetails(null)}
-                className="p-1.5 rounded-xl bg-zinc-800 text-zinc-400 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Customer Details */}
-            <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-2 text-xs">
-              <h4 className="font-bold text-amber-400 uppercase tracking-wider text-[11px]">
-                Dados do Cliente
-              </h4>
-              <p className="text-white font-bold">{selectedOrderDetails.customer_name}</p>
-              <p className="text-zinc-300">Telefone: {selectedOrderDetails.customer_phone}</p>
-              {selectedOrderDetails.delivery_address_snapshot ? (
-                <div className="text-zinc-400 space-y-0.5">
-                  <p>
-                    Endereço: {selectedOrderDetails.delivery_address_snapshot.street},{' '}
-                    {selectedOrderDetails.delivery_address_snapshot.number}{' '}
-                    {selectedOrderDetails.delivery_address_snapshot.complement}
-                  </p>
-                  <p>
-                    Bairro: {selectedOrderDetails.delivery_address_snapshot.neighborhood} -{' '}
-                    {selectedOrderDetails.delivery_address_snapshot.city}
-                  </p>
-                  {selectedOrderDetails.delivery_address_snapshot.reference && (
-                    <p className="text-amber-300 italic">
-                      Ref: {selectedOrderDetails.delivery_address_snapshot.reference}
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <p className="text-zinc-400">Tipo: Retirada rápida no Balcão da Loja</p>
-              )}
-            </div>
-
-            {/* Items */}
-            <div className="space-y-2 text-xs">
-              <h4 className="font-bold text-white uppercase tracking-wider text-[11px]">
-                Itens do Pedido ({selectedOrderDetails.items.length})
-              </h4>
-              <div className="divide-y divide-zinc-800/80 max-h-48 overflow-y-auto pr-1">
-                {selectedOrderDetails.items.map((it, idx) => (
-                  <div key={idx} className="py-2 flex justify-between">
-                    <div>
-                      <p className="font-bold text-white">
-                        <span className="text-amber-400">{it.quantity}x</span> {it.product_name_snapshot}
-                      </p>
-                      {it.options && it.options.length > 0 && (
-                        <div className="pl-4 text-[10px] text-zinc-400">
-                          {it.options.map((opt, i) => (
-                            <p key={i}>• {opt.option_name_snapshot}</p>
-                          ))}
-                        </div>
-                      )}
-                      {it.notes && (
-                        <p className="pl-4 text-[10px] text-amber-300 italic">Obs: {it.notes}</p>
-                      )}
-                    </div>
-                    <span className="font-bold text-zinc-300">
-                      {formatCentsToBRL(it.line_total_cents)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Financial Summary */}
-            <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-800 text-xs space-y-1.5">
-              <div className="flex justify-between text-zinc-400">
-                <span>Subtotal dos Produtos</span>
-                <span>{formatCentsToBRL(selectedOrderDetails.subtotal_cents)}</span>
-              </div>
-              <div className="flex justify-between text-zinc-400">
-                <span>Taxa de Entrega</span>
-                <span>{formatCentsToBRL(selectedOrderDetails.delivery_fee_cents)}</span>
-              </div>
-              {selectedOrderDetails.discount_cents > 0 && (
-                <div className="flex justify-between text-emerald-400">
-                  <span>Desconto Aplicado</span>
-                  <span>-{formatCentsToBRL(selectedOrderDetails.discount_cents)}</span>
-                </div>
-              )}
-              <div className="flex justify-between text-sm font-black text-amber-400 pt-1.5 border-t border-zinc-800">
-                <span>Total Final</span>
-                <span>{formatCentsToBRL(selectedOrderDetails.total_cents)}</span>
-              </div>
-              <p className="text-[10px] text-zinc-400 pt-1">
-                Forma de Pagamento: <strong>{selectedOrderDetails.payment_method.replace(/_/g, ' ')}</strong> &bull;{' '}
-                <span className="text-emerald-400">{selectedOrderDetails.payment_status}</span>
-              </p>
-            </div>
-
-            {/* Print / Actions */}
-            <div className="flex justify-between items-center pt-2">
-              <button
-                onClick={() => window.print()}
-                className="flex items-center space-x-1.5 px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-bold transition cursor-pointer"
-              >
-                <Printer className="w-4 h-4" />
-                <span>Imprimir Recibo</span>
-              </button>
-
-              <button
-                onClick={() => setSelectedOrderDetails(null)}
-                className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 text-xs font-black uppercase cursor-pointer"
-              >
-                Fechar
-              </button>
-            </div>
-          </div>
-        </div>
+        <OrderDetailsModal order={selectedOrderDetails} settings={settings} onClose={() => setSelectedOrderDetails(null)} />
       )}
 
       {/* Modal: Courier Assignment */}

@@ -16,6 +16,8 @@ export default defineConfig(() => {
     test: {
       environment: 'node',
       setupFiles: ['src/test/setup.ts'],
+      // Os testes do banco (PGlite) rodam à parte: npm run test:db
+      exclude: ['**/node_modules/**', 'supabase/**'],
       // Testes rodam sempre contra o backend local de demonstração
       env: {VITE_SUPABASE_URL: '', VITE_SUPABASE_ANON_KEY: ''},
     },

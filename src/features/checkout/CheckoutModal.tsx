@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   X,
   CreditCard,
@@ -20,6 +20,29 @@ import { formatCentsToBRL, parseBRLToCents } from '../../lib/formatters/currency
 import { orderService } from '../../services/order.service';
 import { paymentService } from '../../services/payment.service';
 import { IS_DEMO_MODE, getOrderById, getStoreSettings, subscribeToRealtime } from '../../services/storage';
+import { formatCep, lookupCep } from '../../lib/viacep';
+
+// Dados do último pedido neste aparelho, para não digitar tudo de novo
+const LAST_CHECKOUT_KEY = 'bh_last_checkout_v1';
+interface LastCheckout {
+  name: string;
+  phone: string;
+  address?: { postal_code: string; street: string; number: string; complement?: string; neighborhood: string; city: string; state: string; reference?: string };
+}
+function readLastCheckout(): LastCheckout | null {
+  try {
+    return JSON.parse(localStorage.getItem(LAST_CHECKOUT_KEY) || 'null');
+  } catch {
+    return null;
+  }
+}
+const newRequestId = () =>
+  typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+      });
 
 interface CheckoutModalProps {
   isOpen: boolean;
@@ -74,6 +97,40 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, o
   const [neighborhood, setNeighborhood] = useState(deliveryAddress?.neighborhood || '');
   const [postalCode, setPostalCode] = useState(deliveryAddress?.postal_code || '');
   const [reference, setReference] = useState(deliveryAddress?.reference || '');
+  const [city, setCity] = useState(deliveryAddress?.city || 'São Paulo');
+  const [uf, setUf] = useState(deliveryAddress?.state || 'SP');
+  const [cepStatus, setCepStatus] = useState<string | null>(null);
+  const [usedLast, setUsedLast] = useState(false);
+
+  // Um identificador por tentativa de pedido: reenviar (clique duplo, internet instável)
+  // devolve o mesmo pedido. Muda quando o carrinho muda.
+  const requestId = useRef(newRequestId());
+  const cartSignature = items.map((i) => `${i.id}:${i.quantity}`).join('|');
+  useEffect(() => {
+    requestId.current = newRequestId();
+  }, [cartSignature]);
+
+  const handleCepChange = async (value: string) => {
+    const cep = formatCep(value);
+    setPostalCode(cep);
+    setCepStatus(null);
+    if (cep.replace(/\D/g, '').length !== 8) return;
+    setCepStatus('Buscando endereço…');
+    try {
+      const found = await lookupCep(cep);
+      if (!found) {
+        setCepStatus('CEP não encontrado. Preencha o endereço à mão.');
+        return;
+      }
+      if (found.street) setStreet(found.street);
+      if (found.neighborhood) setNeighborhood(found.neighborhood);
+      if (found.city) setCity(found.city);
+      if (found.state) setUf(found.state);
+      setCepStatus('Endereço preenchido pelo CEP. Confira e informe o número.');
+    } catch {
+      setCepStatus('Não foi possível consultar o CEP agora. Preencha à mão.');
+    }
+  };
 
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(availableMethods[0] ?? 'CASH_ON_DELIVERY');
   const [cashChangeForStr, setCashChangeForStr] = useState('');
@@ -94,6 +151,51 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, o
       setCustomerPhone((v) => v || user.phone);
     }
   }, [isOpen, user?.id]);
+
+  // Reaproveita o cadastro do último pedido feito neste aparelho
+  useEffect(() => {
+    if (!isOpen) return;
+    const last = readLastCheckout();
+    if (!last) return;
+    let used = false;
+    // Cliente logado usa os dados da conta; o aparelho só completa o endereço
+    if (!user && !customerName && last.name) {
+      used = true;
+      setCustomerName(last.name);
+    }
+    if (!user && !customerPhone && last.phone) setCustomerPhone(last.phone);
+    if (last.address && !street && !neighborhood) {
+      used = true;
+      setPostalCode(last.address.postal_code);
+      setStreet(last.address.street);
+      setNumber(last.address.number);
+      setComplement(last.address.complement ?? '');
+      setNeighborhood(last.address.neighborhood);
+      setCity(last.address.city || 'São Paulo');
+      setUf(last.address.state || 'SP');
+      setReference(last.address.reference ?? '');
+    }
+    setUsedLast(used);
+  }, [isOpen]);
+
+  const forgetLast = () => {
+    try {
+      localStorage.removeItem(LAST_CHECKOUT_KEY);
+    } catch {
+      // nada salvo
+    }
+    setUsedLast(false);
+    if (!user) {
+      setCustomerName('');
+      setCustomerPhone('');
+    }
+    setPostalCode('');
+    setStreet('');
+    setNumber('');
+    setComplement('');
+    setNeighborhood('');
+    setReference('');
+  };
 
   useEffect(() => {
     if (!availableMethods.includes(paymentMethod) && availableMethods[0]) {
@@ -127,8 +229,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, o
             number,
             complement,
             neighborhood,
-            city: 'São Paulo',
-            state: 'SP',
+            city,
+            state: uf,
             reference,
           }
         : null
@@ -197,8 +299,8 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, o
               number: number.trim(),
               complement: complement.trim() || undefined,
               neighborhood: neighborhood.trim(),
-              city: 'São Paulo',
-              state: 'SP',
+              city: city.trim() || 'São Paulo',
+              state: uf.trim() || 'SP',
               reference: reference.trim() || undefined,
             }
           : undefined;
@@ -217,6 +319,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, o
         coupon_code: appliedCoupon || undefined,
         cash_change_for_cents:
           paymentMethod === 'CASH_ON_DELIVERY' && cashChangeForStr ? parseBRLToCents(cashChangeForStr) : undefined,
+        client_request_id: requestId.current,
       });
 
       if (!res.success || !res.order) {
@@ -224,6 +327,28 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, o
         return;
       }
 
+      try {
+        const last: LastCheckout = {
+          name: customerName.trim(),
+          phone: customerPhone.trim(),
+          address: addressSnapshot
+            ? {
+                postal_code: addressSnapshot.postal_code,
+                street: addressSnapshot.street,
+                number: addressSnapshot.number,
+                complement: addressSnapshot.complement,
+                neighborhood: addressSnapshot.neighborhood,
+                city: addressSnapshot.city,
+                state: addressSnapshot.state,
+                reference: addressSnapshot.reference,
+              }
+            : readLastCheckout()?.address,
+        };
+        localStorage.setItem(LAST_CHECKOUT_KEY, JSON.stringify(last));
+      } catch {
+        // aba anônima: só não lembra para a próxima vez
+      }
+      requestId.current = newRequestId();
       clearCart();
 
       if (paymentMethod === 'PIX_ONLINE' || paymentMethod === 'CARD_ONLINE') {
@@ -469,12 +594,38 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, o
                   </span>
                 </div>
 
+                {usedLast && (
+                  <p className="text-[11px] text-zinc-400">
+                    Usamos os dados do seu último pedido neste aparelho.{' '}
+                    <button type="button" onClick={forgetLast} className="text-amber-300 underline cursor-pointer">
+                      Usar outros dados
+                    </button>
+                  </p>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="postal-code"
+                    aria-label="CEP"
+                    value={postalCode}
+                    onChange={(e) => handleCepChange(e.target.value)}
+                    placeholder="CEP (preenche o endereço)"
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500"
+                  />
+                  <p className="sm:col-span-2 self-center text-[11px] text-zinc-400" aria-live="polite">
+                    {cepStatus ?? 'Digite o CEP para preencher rua, bairro e cidade.'}
+                  </p>
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                   <div className="sm:col-span-2">
                     <input
                       type="text"
                       required
                       autoComplete="address-line1"
+                      aria-label="Rua"
                       value={street}
                       onChange={(e) => setStreet(e.target.value)}
                       placeholder="Rua / Avenida"
@@ -484,6 +635,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, o
                   <input
                     type="text"
                     required
+                    aria-label="Número"
                     value={number}
                     onChange={(e) => setNumber(e.target.value)}
                     placeholder="Número"
@@ -491,10 +643,11 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, o
                   />
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                   <input
                     type="text"
                     required
+                    aria-label="Bairro"
                     value={neighborhood}
                     onChange={(e) => setNeighborhood(e.target.value)}
                     placeholder="Bairro"
@@ -502,6 +655,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, o
                   />
                   <input
                     type="text"
+                    aria-label="Complemento"
                     value={complement}
                     onChange={(e) => setComplement(e.target.value)}
                     placeholder="Complemento / Ap"
@@ -509,10 +663,21 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, o
                   />
                   <input
                     type="text"
-                    autoComplete="postal-code"
-                    value={postalCode}
-                    onChange={(e) => setPostalCode(e.target.value)}
-                    placeholder="CEP"
+                    autoComplete="address-level2"
+                    aria-label="Cidade"
+                    value={city}
+                    onChange={(e) => setCity(e.target.value)}
+                    placeholder="Cidade"
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500"
+                  />
+                  <input
+                    type="text"
+                    autoComplete="address-level1"
+                    aria-label="Estado (UF)"
+                    maxLength={2}
+                    value={uf}
+                    onChange={(e) => setUf(e.target.value.toUpperCase())}
+                    placeholder="UF"
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500"
                   />
                 </div>

@@ -13,6 +13,8 @@ import {
   ChevronRight,
   X,
   ExternalLink,
+  Contact,
+  Wallet,
 } from 'lucide-react';
 import { StoreSettings } from '../../../types';
 import { appUrl } from '../../../lib/appUrl';
@@ -22,6 +24,8 @@ export type AdminTab =
   | 'pedidos'
   | 'produtos'
   | 'entregadores'
+  | 'clientes'
+  | 'financeiro'
   | 'relatorios'
   | 'configuracoes'
   | 'usuarios'
@@ -71,6 +75,20 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
       label: 'Entregadores & Frotas',
       path: '/admin/entregadores',
       icon: Bike,
+      badge: undefined,
+    },
+    {
+      id: 'clientes' as AdminTab,
+      label: 'Clientes (CRM)',
+      path: '/admin/clientes',
+      icon: Contact,
+      badge: undefined,
+    },
+    {
+      id: 'financeiro' as AdminTab,
+      label: 'Financeiro & Caixa',
+      path: '/admin/financeiro',
+      icon: Wallet,
       badge: undefined,
     },
     {

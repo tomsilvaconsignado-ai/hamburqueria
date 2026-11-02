@@ -1,399 +1,176 @@
-import React, { useState } from 'react';
-import {
-  BarChart3,
-  TrendingUp,
-  DollarSign,
-  ShoppingBag,
-  Bike,
-  Calendar,
-  Download,
-  Printer,
-  Flame,
-  AlertCircle,
-  FileSpreadsheet,
-} from 'lucide-react';
-import { Order, Product, Courier, Category } from '../../../types';
+import React, { useEffect, useState } from 'react';
+import { BarChart3, Printer, FileSpreadsheet, Loader2, Clock, Flame, XCircle, CalendarDays } from 'lucide-react';
+import type { StoreSettings } from '../../../types';
 import { formatCentsToBRL } from '../../../lib/formatters/currency';
-import { exportOrdersToCSV, downloadCSV } from '../../../services/storage';
+import { formatDateTimeBR } from '../../../lib/formatters/date';
+import { PAYMENT_METHOD_LABEL } from '../../../lib/labels';
+import { downloadCSV } from '../../../services/storage';
+import { printSalesReport } from '../../../lib/documents/templates';
+import { ADMIN_DATA_AVAILABLE, fetchReport, Report } from '../../../services/admin.service';
+import { PeriodPicker, Period, periodFor, formatPeriod } from '../components/PeriodPicker';
 
 interface AdminReportsPageProps {
-  orders: Order[];
-  products: Product[];
-  couriers: Courier[];
-  categories: Category[];
+  settings: StoreSettings;
 }
 
-export const AdminReportsPage: React.FC<AdminReportsPageProps> = ({
-  orders,
-  products,
-  couriers,
-  categories,
-}) => {
-  const [period, setPeriod] = useState<'TODAY' | 'WEEK' | 'MONTH' | 'ALL'>('ALL');
-  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('ALL');
+const csvCell = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+const toCsv = (head: string[], rows: unknown[][]) => [head, ...rows].map((r) => r.map(csvCell).join(';')).join('\n');
+const reais = (cents: number) => (Number(cents) / 100).toFixed(2).replace('.', ',');
 
-  // Filter orders by period
-  const now = new Date();
-  const filteredOrders = orders.filter((o) => {
-    const orderDate = new Date(o.created_at);
-    if (period === 'TODAY') {
-      return (
-        orderDate.getDate() === now.getDate() &&
-        orderDate.getMonth() === now.getMonth() &&
-        orderDate.getFullYear() === now.getFullYear()
-      );
-    } else if (period === 'WEEK') {
-      const diffTime = Math.abs(now.getTime() - orderDate.getTime());
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      return diffDays <= 7;
-    } else if (period === 'MONTH') {
-      return (
-        orderDate.getMonth() === now.getMonth() &&
-        orderDate.getFullYear() === now.getFullYear()
-      );
-    }
-    return true;
-  });
+const Bars: React.FC<{ items: { label: string; value: number; tip: string }[]; height?: string }> = ({ items, height = 'h-40' }) => {
+  const max = Math.max(1, ...items.map((i) => i.value));
+  return (
+    <div className={`flex items-end gap-1 ${height}`} role="img" aria-label={items.map((i) => `${i.label}: ${i.tip}`).join(', ')}>
+      {items.map((i) => (
+        <div key={i.label} className="flex-1 min-w-0 flex flex-col items-center justify-end h-full group">
+          <div className="opacity-0 group-hover:opacity-100 mb-1 px-1.5 py-0.5 rounded bg-zinc-950 border border-zinc-700 text-[10px] text-amber-300 whitespace-nowrap">{i.tip}</div>
+          <div
+            style={{ height: `${i.value ? Math.max(3, (i.value / max) * 100) : 1}%` }}
+            className="w-full rounded-t-md bg-zinc-600 group-hover:bg-amber-500"
+          />
+          <span className="mt-1 text-[9px] text-zinc-500 truncate w-full text-center">{i.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
 
-  // Financial Metrics
-  const completedOrders = filteredOrders.filter((o) => o.status === 'CONCLUIDO');
-  const cancelledOrders = filteredOrders.filter((o) => o.status === 'CANCELADO');
+export const AdminReportsPage: React.FC<AdminReportsPageProps> = ({ settings }) => {
+  const [period, setPeriod] = useState<Period>(() => periodFor('30D'));
+  const [report, setReport] = useState<Report | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const totalRevenueCents = filteredOrders
-    .filter(
-      (o) =>
-        o.payment_status === 'PAGO' ||
-        o.payment_status === 'PAGO_NA_ENTREGA' ||
-        o.status === 'CONCLUIDO'
-    )
-    .reduce((acc, o) => acc + o.total_cents, 0);
-
-  const totalDeliveryFeesCents = filteredOrders
-    .filter((o) => o.status !== 'CANCELADO')
-    .reduce((acc, o) => acc + o.delivery_fee_cents, 0);
-
-  const averageTicketCents =
-    completedOrders.length > 0
-      ? Math.round(
-          completedOrders.reduce((acc, o) => acc + o.total_cents, 0) / completedOrders.length
-        )
-      : totalRevenueCents > 0
-      ? Math.round(totalRevenueCents / Math.max(1, filteredOrders.length))
-      : 0;
-
-  const cancellationRate =
-    filteredOrders.length > 0
-      ? ((cancelledOrders.length / filteredOrders.length) * 100).toFixed(1)
-      : '0.0';
-
-  // Ranking de Produtos Mais Vendidos
-  const productStatsMap: Record<
-    string,
-    { name: string; quantity: number; revenueCents: number; categoryId: string }
-  > = {};
-
-  filteredOrders.forEach((order) => {
-    if (order.status === 'CANCELADO') return;
-    order.items.forEach((item) => {
-      const pId = item.product_id || item.product_name_snapshot;
-      if (!productStatsMap[pId]) {
-        const prodMatch = products.find((p) => p.id === item.product_id);
-        productStatsMap[pId] = {
-          name: item.product_name_snapshot,
-          quantity: 0,
-          revenueCents: 0,
-          categoryId: prodMatch?.category_id || 'geral',
-        };
-      }
-      productStatsMap[pId].quantity += item.quantity;
-      productStatsMap[pId].revenueCents += item.line_total_cents;
+  useEffect(() => {
+    if (!ADMIN_DATA_AVAILABLE) return;
+    let alive = true;
+    setLoading(true);
+    fetchReport(period.from, period.to).then((r) => {
+      if (!alive) return;
+      setLoading(false);
+      setError(r.error ?? null);
+      setReport(r.data ?? null);
     });
-  });
-
-  let rankedProducts = Object.values(productStatsMap);
-  if (selectedCategoryFilter !== 'ALL') {
-    rankedProducts = rankedProducts.filter((p) => p.categoryId === selectedCategoryFilter);
-  }
-  const topByQuantity = [...rankedProducts].sort((a, b) => b.quantity - a.quantity);
-  const topByRevenue = [...rankedProducts].sort((a, b) => b.revenueCents - a.revenueCents);
-
-  // Desempenho dos Entregadores
-  const courierStats = couriers.map((courier) => {
-    const courierOrders = filteredOrders.filter(
-      (o) => o.assigned_courier_id === courier.id || o.assigned_courier_id === courier.user_id
-    );
-    const deliveredCount = courierOrders.filter((o) => o.status === 'CONCLUIDO').length;
-    const courierFeesEarned = deliveredCount * 900; // Repasse de R$ 9,00 por entrega
-
-    return {
-      ...courier,
-      periodOrdersCount: courierOrders.length,
-      periodDeliveredCount: deliveredCount,
-      periodFeesEarnedCents: courierFeesEarned,
+    return () => {
+      alive = false;
     };
-  });
+  }, [period.from, period.to]);
 
-  const handleExportCSV = () => {
-    const csv = exportOrdersToCSV(filteredOrders);
-    downloadCSV(`relatorio-vendas-burgerhub-${period.toLowerCase()}.csv`, csv);
+  if (!ADMIN_DATA_AVAILABLE) {
+    return <p className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 text-sm text-zinc-400">Os relatórios usam o banco de dados e não estão disponíveis no modo demonstração.</p>;
+  }
+
+  const s = report?.summary;
+  const cancelRate = s && s.orders_total ? ((s.orders_cancelled / s.orders_total) * 100).toFixed(1) : '0.0';
+  const title =
+    period.from === period.to ? 'Relatório diário de vendas' : period.preset === 'MONTH' || period.preset === 'LAST_MONTH' ? 'Relatório mensal de vendas' : 'Relatório de vendas';
+
+  const exportCsv = () => {
+    if (!report) return;
+    const parts = [
+      csvCell(`${title} · ${formatPeriod(period)}`),
+      toCsv(['Dia', 'Pedidos concluídos', 'Líquido (R$)', 'Cancelados'], report.by_day.map((d) => [d.date.split('-').reverse().join('/'), d.orders, reais(d.net_cents), d.cancelled])),
+      '',
+      toCsv(['Produto', 'Quantidade', 'Receita (R$)'], report.by_product.map((p) => [p.name, p.quantity, reais(p.revenue_cents)])),
+      '',
+      toCsv(['Categoria', 'Quantidade', 'Receita (R$)'], report.by_category.map((c) => [c.name, c.quantity, reais(c.revenue_cents)])),
+      '',
+      toCsv(['Forma de pagamento', 'Pedidos', 'Valor (R$)'], report.by_payment.map((p) => [PAYMENT_METHOD_LABEL[p.method] ?? p.method, p.orders, reais(p.net_cents)])),
+    ];
+    downloadCSV(`relatorio-burgerhub-${period.from}-a-${period.to}.csv`, '﻿' + parts.join('\n'));
   };
+
+  // Horário: mostra das 6h às 5h do dia seguinte (madrugada no fim), cobrindo turnos noturnos
+  const hours = Array.from({ length: 24 }, (_, i) => (i + 6) % 24).map((h) => {
+    const n = report?.by_hour.find((x) => x.hour === h)?.orders ?? 0;
+    return { label: `${h}h`, value: n, tip: `${h}h: ${n} pedidos` };
+  });
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-4 p-6 rounded-3xl bg-[#141622] border border-zinc-800 shadow-xl">
         <div>
-          <h2 className="text-2xl font-black font-['Bebas_Neue',sans-serif] tracking-wide text-white flex items-center space-x-2">
-            <BarChart3 className="w-6 h-6 text-amber-500" />
-            <span>RELATÓRIOS EXECUTIVOS & AUTONOMIA DE VENDAS</span>
+          <h2 className="text-2xl font-black font-['Bebas_Neue',sans-serif] tracking-wide text-white flex items-center gap-2">
+            <BarChart3 className="w-6 h-6 text-amber-500" /> RELATÓRIOS DE VENDAS & DESEMPENHO
           </h2>
-          <p className="text-xs text-zinc-400">
-            Filtre métricas financeiras, produtos mais vendidos, taxas de entrega e desempenho da equipe
-          </p>
+          <p className="text-xs text-zinc-400">Todo o histórico de pedidos, calculado no servidor no horário de Brasília.</p>
         </div>
-
-        {/* Actions */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Period Selector */}
-          <div className="flex items-center space-x-1 p-1 rounded-xl bg-zinc-900 border border-zinc-800 text-xs">
-            <button
-              onClick={() => setPeriod('TODAY')}
-              className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
-                period === 'TODAY' ? 'bg-amber-500 text-zinc-950' : 'text-zinc-400 hover:text-white'
-              }`}
-            >
-              Hoje
-            </button>
-            <button
-              onClick={() => setPeriod('WEEK')}
-              className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
-                period === 'WEEK' ? 'bg-amber-500 text-zinc-950' : 'text-zinc-400 hover:text-white'
-              }`}
-            >
-              7 Dias
-            </button>
-            <button
-              onClick={() => setPeriod('MONTH')}
-              className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
-                period === 'MONTH' ? 'bg-amber-500 text-zinc-950' : 'text-zinc-400 hover:text-white'
-              }`}
-            >
-              Este Mês
-            </button>
-            <button
-              onClick={() => setPeriod('ALL')}
-              className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
-                period === 'ALL' ? 'bg-amber-500 text-zinc-950' : 'text-zinc-400 hover:text-white'
-              }`}
-            >
-              Tudo
-            </button>
-          </div>
-
-          <button
-            onClick={handleExportCSV}
-            className="flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 font-bold text-xs transition cursor-pointer"
-          >
-            <Download className="w-4 h-4" />
-            <span>Exportar CSV</span>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={() => report && printSalesReport(report, settings, title)} disabled={!report} className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 disabled:opacity-40 text-white font-bold text-xs border border-zinc-700 cursor-pointer">
+            <Printer className="w-4 h-4 text-amber-400" /> Imprimir / PDF
           </button>
-
-          <button
-            onClick={() => window.print()}
-            className="flex items-center space-x-1.5 px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-300 font-bold text-xs border border-zinc-800 transition cursor-pointer"
-          >
-            <Printer className="w-4 h-4" />
-            <span>Imprimir</span>
+          <button onClick={exportCsv} disabled={!report} className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 disabled:opacity-40 text-white font-bold text-xs border border-zinc-700 cursor-pointer">
+            <FileSpreadsheet className="w-4 h-4 text-emerald-400" /> Exportar CSV
           </button>
         </div>
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="p-5 rounded-3xl bg-[#141622] border border-amber-500/30 shadow-lg space-y-1">
-          <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider block">
-            Faturamento do Período
-          </span>
-          <p className="text-3xl font-black text-amber-400 font-['Bebas_Neue',sans-serif]">
-            {formatCentsToBRL(totalRevenueCents)}
-          </p>
-          <span className="text-[10px] text-zinc-400 block">
-            {completedOrders.length} pedidos finalizados com sucesso
-          </span>
-        </div>
-
-        <div className="p-5 rounded-3xl bg-[#141622] border border-zinc-800 shadow-lg space-y-1">
-          <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider block">
-            Ticket Médio
-          </span>
-          <p className="text-3xl font-black text-white font-['Bebas_Neue',sans-serif]">
-            {formatCentsToBRL(averageTicketCents)}
-          </p>
-          <span className="text-[10px] text-zinc-400 block">Média por pedido concluído</span>
-        </div>
-
-        <div className="p-5 rounded-3xl bg-[#141622] border border-zinc-800 shadow-lg space-y-1">
-          <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider block">
-            Taxas de Entrega Arrecadadas
-          </span>
-          <p className="text-3xl font-black text-blue-400 font-['Bebas_Neue',sans-serif]">
-            {formatCentsToBRL(totalDeliveryFeesCents)}
-          </p>
-          <span className="text-[10px] text-zinc-400 block">Repasse para logística</span>
-        </div>
-
-        <div className="p-5 rounded-3xl bg-[#141622] border border-zinc-800 shadow-lg space-y-1">
-          <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider block">
-            Taxa de Cancelamento
-          </span>
-          <p className="text-3xl font-black text-rose-400 font-['Bebas_Neue',sans-serif]">
-            {cancellationRate}%
-          </p>
-          <span className="text-[10px] text-zinc-400 block">
-            {cancelledOrders.length} pedido(s) cancelado(s)
-          </span>
-        </div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <PeriodPicker value={period} onChange={setPeriod} presets={['TODAY', '7D', '30D', 'MONTH', 'LAST_MONTH']} />
+        {loading && <span className="text-xs text-zinc-400 flex items-center gap-1.5"><Loader2 className="w-4 h-4 animate-spin" /> Atualizando…</span>}
       </div>
+      {error && <p className="text-xs text-rose-300">{error}</p>}
 
-      {/* Row: Top Products Ranking */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Top by Quantity */}
-        <div className="p-6 rounded-3xl bg-[#141620] border border-zinc-800 space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center space-x-2">
-              <Flame className="w-4 h-4 text-amber-500" />
-              <span>Produtos Mais Vendidos (em Unidades)</span>
-            </h3>
-            <span className="text-xs font-mono text-zinc-400">{topByQuantity.length} produtos</span>
+      {s && report && (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+            {[
+              ['Pedidos concluídos', String(s.orders_completed)],
+              ['Faturamento líquido', formatCentsToBRL(s.net_cents)],
+              ['Ticket médio', formatCentsToBRL(s.avg_ticket_cents)],
+              ['Entrega / retirada', `${s.delivery_count} / ${s.pickup_count}`],
+              ['Taxa de cancelamento', `${cancelRate}%`],
+            ].map(([l, v]) => (
+              <div key={l} className="p-4 rounded-2xl bg-[#141620] border border-zinc-800">
+                <span className="block text-[10px] uppercase tracking-wider text-zinc-400">{l}</span>
+                <span className="text-lg font-black text-white tabular-nums">{v}</span>
+              </div>
+            ))}
           </div>
 
-          <div className="space-y-3">
-            {topByQuantity.length === 0 ? (
-              <p className="text-xs text-zinc-400 py-6 text-center">Nenhum dado no período.</p>
-            ) : (
-              topByQuantity.slice(0, 5).map((prod, idx) => (
-                <div
-                  key={idx}
-                  className="flex items-center justify-between p-3 rounded-2xl bg-zinc-900/90 border border-zinc-800 text-xs"
-                >
-                  <div className="flex items-center space-x-3">
-                    <span className="w-6 h-6 rounded-full bg-amber-500/20 text-amber-400 font-black text-xs flex items-center justify-center">
-                      #{idx + 1}
-                    </span>
-                    <div>
-                      <p className="font-bold text-white">{prod.name}</p>
-                      <p className="text-[10px] text-zinc-400">
-                        Receita: {formatCentsToBRL(prod.revenueCents)}
-                      </p>
-                    </div>
-                  </div>
-                  <span className="font-black text-amber-400 text-sm">{prod.quantity} un.</span>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* Top by Revenue */}
-        <div className="p-6 rounded-3xl bg-[#141620] border border-zinc-800 space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center space-x-2">
-              <DollarSign className="w-4 h-4 text-emerald-400" />
-              <span>Produtos com Maior Faturamento (R$)</span>
-            </h3>
-            <span className="text-xs font-mono text-zinc-400">{topByRevenue.length} produtos</span>
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+            <section className="xl:col-span-2 p-5 rounded-3xl bg-[#141620] border border-zinc-800 space-y-3">
+              <h3 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-1.5"><CalendarDays className="w-4 h-4 text-amber-400" /> Vendas por dia</h3>
+              <Bars items={report.by_day.map((d) => ({ label: `${d.date.slice(8, 10)}/${d.date.slice(5, 7)}`, value: Number(d.net_cents), tip: `${formatCentsToBRL(d.net_cents)} · ${d.orders} ped.` }))} />
+            </section>
+            <section className="p-5 rounded-3xl bg-[#141620] border border-zinc-800 space-y-3">
+              <h3 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-1.5"><Clock className="w-4 h-4 text-amber-400" /> Pedidos por horário</h3>
+              <Bars height="h-32" items={hours} />
+              <p className="text-[10px] text-zinc-500">Ajuda a dimensionar equipe e entregadores nos horários de pico.</p>
+            </section>
           </div>
 
-          <div className="space-y-3">
-            {topByRevenue.length === 0 ? (
-              <p className="text-xs text-zinc-400 py-6 text-center">Nenhum dado no período.</p>
-            ) : (
-              topByRevenue.slice(0, 5).map((prod, idx) => (
-                <div
-                  key={idx}
-                  className="flex items-center justify-between p-3 rounded-2xl bg-zinc-900/90 border border-zinc-800 text-xs"
-                >
-                  <div className="flex items-center space-x-3">
-                    <span className="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 font-black text-xs flex items-center justify-center">
-                      #{idx + 1}
-                    </span>
-                    <div>
-                      <p className="font-bold text-white">{prod.name}</p>
-                      <p className="text-[10px] text-zinc-400">{prod.quantity} unidades vendidas</p>
-                    </div>
-                  </div>
-                  <span className="font-black text-emerald-400 text-sm">
-                    {formatCentsToBRL(prod.revenueCents)}
-                  </span>
-                </div>
-              ))
-            )}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <section className="p-5 rounded-3xl bg-[#141620] border border-zinc-800 space-y-2">
+              <h3 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-1.5"><Flame className="w-4 h-4 text-amber-400" /> Produtos mais vendidos</h3>
+              {report.by_product.length === 0 ? <p className="text-xs text-zinc-500 py-4 text-center">Nenhuma venda concluída no período.</p> : (
+                <table className="w-full text-xs">
+                  <thead className="text-[10px] uppercase text-zinc-500"><tr><th className="text-left py-1">#</th><th className="text-left">Produto</th><th className="text-right">Qtd</th><th className="text-right">Receita</th></tr></thead>
+                  <tbody className="divide-y divide-zinc-800/60">
+                    {report.by_product.slice(0, 15).map((p, i) => (
+                      <tr key={p.name}><td className="py-1.5 text-zinc-500">{i + 1}</td><td className="text-zinc-200">{p.name}</td><td className="text-right tabular-nums">{p.quantity}</td><td className="text-right font-bold tabular-nums">{formatCentsToBRL(p.revenue_cents)}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </section>
+            <section className="p-5 rounded-3xl bg-[#141620] border border-zinc-800 space-y-2">
+              <h3 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-1.5"><XCircle className="w-4 h-4 text-rose-400" /> Cancelamentos ({s.orders_cancelled} · {formatCentsToBRL(s.cancelled_cents)})</h3>
+              {report.cancellations.length === 0 ? <p className="text-xs text-zinc-500 py-4 text-center">Nenhum cancelamento no período.</p> : (
+                <ul className="divide-y divide-zinc-800/60 max-h-72 overflow-y-auto text-xs">
+                  {report.cancellations.map((c) => (
+                    <li key={c.order_number} className="py-1.5 flex justify-between gap-2">
+                      <span><b className="text-amber-400">{c.order_number}</b> <span className="text-zinc-500">{formatDateTimeBR(c.created_at)}</span><span className="block text-zinc-400">{c.reason || 'Sem motivo'}</span></span>
+                      <span className="font-bold tabular-nums">{formatCentsToBRL(c.total_cents)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
           </div>
-        </div>
-      </div>
-
-      {/* Row: Courier Performance Table */}
-      <div className="rounded-3xl bg-[#141620] border border-zinc-800 overflow-hidden shadow-xl space-y-2">
-        <div className="p-5 border-b border-zinc-800/80 flex items-center justify-between">
-          <div>
-            <h3 className="text-base font-bold text-white flex items-center space-x-2">
-              <Bike className="w-5 h-5 text-amber-400" />
-              <span>Desempenho & Repasses dos Entregadores</span>
-            </h3>
-            <p className="text-xs text-zinc-400">
-              Corridas realizadas no período e estimativa de taxas repassadas
-            </p>
-          </div>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-zinc-950/80 text-zinc-400 font-bold uppercase tracking-wider border-b border-zinc-800">
-              <tr>
-                <th className="p-4">Entregador</th>
-                <th className="p-4">Veículo</th>
-                <th className="p-4">Situação</th>
-                <th className="p-4">Entregas no Período</th>
-                <th className="p-4">Repasse Estimado</th>
-                <th className="p-4">Avaliação Média</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-800/60">
-              {courierStats.map((c) => (
-                <tr key={c.id} className="hover:bg-zinc-900/40 transition">
-                  <td className="p-4 font-bold text-white">
-                    {c.full_name}
-                    <span className="block text-[10px] text-zinc-400 font-normal">{c.phone}</span>
-                  </td>
-                  <td className="p-4 text-zinc-300">
-                    {c.vehicle_type} {c.vehicle_model ? `(${c.vehicle_model})` : ''}
-                  </td>
-                  <td className="p-4">
-                    <span
-                      className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
-                        c.status === 'ATIVO'
-                          ? 'bg-emerald-500/20 text-emerald-400'
-                          : 'bg-rose-500/20 text-rose-400'
-                      }`}
-                    >
-                      {c.status}
-                    </span>
-                  </td>
-                  <td className="p-4 font-bold text-white">
-                    {c.periodDeliveredCount} entregas
-                  </td>
-                  <td className="p-4 font-black text-amber-400">
-                    {formatCentsToBRL(c.periodFeesEarnedCents)}
-                  </td>
-                  <td className="p-4 text-amber-300 font-bold">
-                    ★ {c.average_rating || 5.0}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+          <p className="text-[11px] text-zinc-500">Bruto, descontos, despesas, saldo e fechamento de caixa ficam em Financeiro & Caixa; o histórico por entregador fica em Entregadores.</p>
+        </>
+      )}
     </div>
   );
 };

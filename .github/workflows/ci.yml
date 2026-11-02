@@ -46,6 +46,10 @@ jobs:
       - name: Tests
         run: npm test
 
+      # Migrações + regras de segurança num Postgres em memória (PGlite)
+      - name: Database tests
+        run: npm run test:db
+
       - name: Build
         run: npm run build
 

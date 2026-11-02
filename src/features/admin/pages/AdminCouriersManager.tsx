@@ -21,6 +21,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { Courier, CourierStatus, VehicleType, UserProfile } from '../../../types';
+import { CourierHistoryPanel } from '../components/CourierHistoryPanel';
 import {
   saveCourier,
   deleteCourier,
@@ -578,6 +579,8 @@ export const AdminCouriersManager: React.FC<AdminCouriersManagerProps> = ({
           })
         )}
       </div>
+
+      <CourierHistoryPanel />
 
       {/* Modal: Add/Edit Courier */}
       {isModalOpen && (

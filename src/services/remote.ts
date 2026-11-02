@@ -89,7 +89,8 @@ export function getGuestTokenForOrder(orderId: string): string | undefined {
 
 // --- MAPEAMENTO DE LINHAS DO BANCO ---
 function mapOrder(row: Record<string, unknown>): Order {
-  const { order_items, guest_token_hash: _hash, ...rest } = row as Record<string, unknown> & {
+  // Hash, sal e identificador do token de convidado não saem da camada de dados
+  const { order_items, guest_token_hash: _hash, guest_token_salt: _salt, client_request_id: _req, ...rest } = row as Record<string, unknown> & {
     order_items?: Record<string, unknown>[];
   };
   const items: OrderItem[] = (order_items ?? []).map((it) => {
@@ -252,6 +253,8 @@ export interface CreateOrderParams {
   payment_method: PaymentMethod;
   coupon_code?: string;
   cash_change_for_cents?: number;
+  /** Identificador aleatório do envio: o mesmo pedido reenviado não é criado duas vezes. */
+  client_request_id?: string;
 }
 
 export async function remoteCreateOrder(
@@ -266,6 +269,7 @@ export async function remoteCreateOrder(
     customer_notes: params.customer_notes ?? null,
     coupon_code: params.coupon_code ?? null,
     cash_change_for_cents: params.cash_change_for_cents ?? null,
+    client_request_id: params.client_request_id ?? null,
     items: params.items.map((it) => ({
       product_id: it.product.id,
       quantity: it.quantity,

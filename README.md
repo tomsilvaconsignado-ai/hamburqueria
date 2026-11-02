@@ -91,19 +91,49 @@ a partir de `.env.example` com a URL e a anon key exibidas pelo `supabase start`
    com `base=/hamburqueria/` e publica no Pages. O `404.html` (cópia do `index.html`) permite recarregar
    rotas internas como `/admin` e `/cozinha`.
 
-## 5. Estrutura
+## 5. Módulos de gestão (migração `20261101000000`)
+
+- **Pedidos**: painel operacional por colunas, histórico com busca e período, alerta sonoro de pedido novo,
+  linha do tempo com horário e responsável de cada etapa, impressão de comanda, comprovante, recibo de entrega
+  e comprovante de pagamento (térmica 80 mm ou A4; "Salvar como PDF" pelo diálogo de impressão).
+- **Pedido sem duplicidade**: o checkout envia um `client_request_id`; o mesmo envio repetido devolve o pedido
+  já criado (`create_order` agora envolve a função original, renomeada para `create_order_core`).
+- **Clientes (CRM)**: identificados pelo telefone (`phone_key`), inclusive convidados. Métricas vêm dos pedidos;
+  a tabela `customer_crm` guarda o que a loja anota (VIP, aniversário, preferências, endereços extras).
+- **Financeiro**: `admin_report` (bruto, descontos, líquido, despesas, saldo, por pagamento/produto/categoria/dia/
+  horário), despesas (`expenses`) e fechamento de caixa (`admin_close_cash`, tabela `cash_closings`). O saldo
+  não é lucro: não inclui custo de mercadorias, impostos e taxas não lançadas.
+- **Entregadores**: `admin_courier_report` com entregas, horários de saída e entrega, quem atribuiu e taxas.
+- **WhatsApp**: links `wa.me` com mensagens prontas por etapa. O botão **abre** o WhatsApp; quem envia é o
+  atendente. Para envio automático, implemente outro `MessageChannel` (`src/lib/whatsapp.ts`) chamando uma
+  Edge Function com o token da WhatsApp Cloud API — o token nunca vai para o navegador.
+- **CEP**: ViaCEP (gratuito) no checkout e na ficha do cliente; o endereço continua editável.
+
+Os cálculos rodam no banco, no fuso da loja, sobre todo o histórico. Testes do banco: `npm run test:db`
+(aplica todas as migrações num Postgres em memória e testa permissões e regras; também roda no CI).
+
+## 6. Estrutura
 
 | Caminho | Conteúdo |
 | --- | --- |
 | `src/services/storage.ts` | Fachada de dados + backend local do modo demonstração |
 | `src/services/remote.ts` | Integração Supabase (leituras, Realtime, RPCs, escritas do admin) |
+| `src/services/admin.service.ts` | Relatórios, clientes, despesas, caixa e entregas (funções do servidor) |
 | `src/services/orderStateMachine.ts` | Regras de transição de status (espelho das regras do banco) |
+| `src/lib/documents/` | Documentos impressos (HTML + CSS de impressão) |
+| `src/lib/whatsapp.ts`, `src/lib/viacep.ts` | Mensagens/links de WhatsApp e consulta de CEP |
 | `supabase/migrations/` | Esquema, RLS, trigger de estados e funções transacionais |
+| `supabase/tests/` | Testes do banco (PGlite) |
 | `supabase/functions/` | Pagamento (Mercado Pago), webhook e criação de funcionários |
 | `docs/` | Prompt original do projeto e referências visuais |
 
-## 6. Limitações conhecidas
+## 7. Limitações conhecidas
 
-- Endereços salvos em "Minha Conta" ainda são apenas visuais (não persistem na tabela `customer_addresses`).
-- O painel carrega os 300 pedidos mais recentes; relatórios de períodos longos precisam de consultas paginadas.
+- Endereços salvos em "Minha Conta" ainda são apenas visuais (não persistem na tabela `customer_addresses`);
+  o checkout reaproveita os dados do último pedido feito no mesmo aparelho.
+- A lista de pedidos do painel mostra os 300 mais recentes; relatórios, financeiro e clientes consultam todo o
+  histórico no servidor.
 - Notificações (tabela `notifications`) ainda não são enviadas; o acompanhamento é feito pelo Realtime.
+- Taxas do Mercado Pago não são registradas automaticamente; lance-as como despesa para o saldo ficar correto.
+- Mapa: há link para o OpenStreetMap no pedido; cálculo de distância/taxa por raio ainda não foi implementado
+  (a taxa continua por bairro/zona).

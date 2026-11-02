@@ -46,6 +46,10 @@ import { AdminReportsPage } from './pages/AdminReportsPage';
 import { AdminSettingsPage } from './pages/AdminSettingsPage';
 import { AdminStaffUsersPage } from './pages/AdminStaffUsersPage';
 import { AdminAuditLogsPage } from './pages/AdminAuditLogsPage';
+import { AdminCustomersPage } from './pages/AdminCustomersPage';
+import { AdminFinancePage } from './pages/AdminFinancePage';
+import { useNewOrderAlert } from './hooks/useNewOrderAlert';
+import { BellOff } from 'lucide-react';
 
 export interface AdminDashboardProps {
   subpage?:
@@ -53,6 +57,8 @@ export interface AdminDashboardProps {
     | 'pedidos'
     | 'produtos'
     | 'entregadores'
+    | 'clientes'
+    | 'financeiro'
     | 'relatorios'
     | 'configuracoes'
     | 'usuarios'
@@ -66,6 +72,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ subpage = 'dashb
     if (subpage === 'pedidos') return 'pedidos';
     if (subpage === 'produtos') return 'produtos';
     if (subpage === 'entregadores') return 'entregadores';
+    if (subpage === 'clientes') return 'clientes';
+    if (subpage === 'financeiro') return 'financeiro';
     if (subpage === 'relatorios') return 'relatorios';
     if (subpage === 'configuracoes') return 'configuracoes';
     if (subpage === 'usuarios') return 'usuarios';
@@ -118,6 +126,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ subpage = 'dashb
     }
   }, [subpage]);
 
+  const orderAlert = useNewOrderAlert(orders);
+
   const handleTabChange = (tab: AdminTab) => {
     setActiveTab(tab);
     if (tab === 'dashboard') navigate('/admin');
@@ -156,6 +166,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ subpage = 'dashb
                 {activeTab === 'pedidos' && 'Gestão de Pedidos em Tempo Real'}
                 {activeTab === 'produtos' && 'Cardápio & Catálogo de Produtos'}
                 {activeTab === 'entregadores' && 'Gestão de Entregadores & Frota'}
+                {activeTab === 'clientes' && 'Clientes & Relacionamento'}
+                {activeTab === 'financeiro' && 'Financeiro & Fechamento de Caixa'}
                 {activeTab === 'relatorios' && 'Relatórios de Vendas & Desempenho'}
                 {activeTab === 'configuracoes' && 'Configurações da Hamburgueria'}
                 {activeTab === 'usuarios' && 'Equipe, Colaboradores & Acessos'}
@@ -166,6 +178,38 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ subpage = 'dashb
 
           {/* Top Right Quick Controls */}
           <div className="flex items-center space-x-3">
+            {/* Alerta de pedidos novos */}
+            <button
+              type="button"
+              onClick={() => {
+                if (orderAlert.unseen.length) {
+                  orderAlert.clear();
+                  handleTabChange('pedidos');
+                } else orderAlert.toggle();
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                orderAlert.toggle();
+              }}
+              title={
+                orderAlert.unseen.length
+                  ? `${orderAlert.unseen.length} pedido(s) novo(s) aguardando confirmação — clique para ver`
+                  : orderAlert.enabled
+                    ? 'Alerta sonoro de pedidos novos ligado (clique para desligar)'
+                    : 'Alerta sonoro desligado (clique para ligar)'
+              }
+              aria-label="Alerta de pedidos novos"
+              className={`relative p-2 rounded-xl border transition cursor-pointer ${
+                orderAlert.unseen.length ? 'bg-amber-500 text-zinc-950 border-amber-400 animate-pulse' : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:text-white'
+              }`}
+            >
+              {orderAlert.enabled ? <Bell className="w-5 h-5" /> : <BellOff className="w-5 h-5 text-zinc-500" />}
+              {orderAlert.unseen.length > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-5 h-5 px-1 rounded-full bg-rose-600 text-white text-[10px] font-black flex items-center justify-center">
+                  {orderAlert.unseen.length}
+                </span>
+              )}
+            </button>
             {/* Store Status Toggle */}
             <div className="hidden sm:flex items-center space-x-2 px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 text-xs">
               <span
@@ -250,9 +294,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ subpage = 'dashb
             <AdminOrdersManager
               orders={orders}
               couriers={couriers}
+              settings={settings}
               onReloadData={loadData}
             />
           )}
+
+          {activeTab === 'clientes' && <AdminCustomersPage settings={settings} />}
+
+          {activeTab === 'financeiro' && <AdminFinancePage settings={settings} />}
 
           {activeTab === 'produtos' && (
             <AdminMenuManager
@@ -275,12 +324,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ subpage = 'dashb
           )}
 
           {activeTab === 'relatorios' && (
-            <AdminReportsPage
-              orders={orders}
-              products={products}
-              couriers={couriers}
-              categories={categories}
-            />
+            <AdminReportsPage settings={settings} />
           )}
 
           {activeTab === 'configuracoes' && (

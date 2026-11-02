@@ -10,9 +10,13 @@ import {
   AlertTriangle,
   Flame,
   Volume2,
+  VolumeX,
+  Printer,
 } from 'lucide-react';
 import { Order, OrderStatus } from '../../types';
-import { getOrders, subscribeToRealtime, updateOrderStatus } from '../../services/storage';
+import { getOrders, getStoreSettings, subscribeToRealtime, updateOrderStatus } from '../../services/storage';
+import { useNewOrderAlert } from '../admin/hooks/useNewOrderAlert';
+import { printKitchenTicket } from '../../lib/documents/templates';
 import { getNextStatus, isOnlinePayment } from '../../services/orderStateMachine';
 import { formatTimeBR, getElapsedMinutes } from '../../lib/formatters/date';
 import { reportResult } from '../../lib/reportResult';
@@ -21,7 +25,8 @@ import { useAuth } from '../auth/AuthContext';
 export const KitchenKDS: React.FC = () => {
   const { user } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
-  const [soundEnabled, setSoundEnabled] = useState(true);
+  // Alerta sonoro real de pedido novo (antes o botão só mudava de cor)
+  const orderAlert = useNewOrderAlert(orders);
 
   const loadOrders = () => {
     const list = getOrders();
@@ -93,6 +98,15 @@ export const KitchenKDS: React.FC = () => {
                 <span className="text-xl font-black font-['Bebas_Neue',sans-serif] text-white">
                   {order.order_number}
                 </span>
+                <button
+                  type="button"
+                  onClick={() => printKitchenTicket(order, getStoreSettings())}
+                  className="p-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 cursor-pointer"
+                  title="Imprimir comanda"
+                  aria-label={`Imprimir comanda ${order.order_number}`}
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                </button>
                 <span
                   className={`flex items-center space-x-1 px-2 py-0.5 rounded text-[10px] font-black uppercase ${
                     order.fulfillment_type === 'DELIVERY'
@@ -268,15 +282,17 @@ export const KitchenKDS: React.FC = () => {
           </div>
 
           <button
-            onClick={() => setSoundEnabled(!soundEnabled)}
-            className={`p-2.5 rounded-xl border transition ${
-              soundEnabled
+            onClick={orderAlert.toggle}
+            aria-pressed={orderAlert.enabled}
+            className={`p-2.5 rounded-xl border transition cursor-pointer ${
+              orderAlert.enabled
                 ? 'bg-amber-500/20 border-amber-500/40 text-amber-400'
                 : 'bg-zinc-800 border-zinc-700 text-zinc-500'
             }`}
-            title="Alerta sonoro de novos pedidos"
+            title={orderAlert.enabled ? 'Alerta sonoro de novos pedidos ligado (clique para desligar)' : 'Alerta sonoro desligado (clique para ligar e testar)'}
+            aria-label="Alerta sonoro de novos pedidos"
           >
-            <Volume2 className="w-5 h-5" />
+            {orderAlert.enabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
           </button>
         </div>
       </div>

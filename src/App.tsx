@@ -205,6 +205,22 @@ function AppContent() {
             }
           />
           <Route
+            path="/admin/clientes"
+            element={
+              <ProtectedRoute allowedRoles={['ADMIN']}>
+                <AdminDashboard subpage="clientes" />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/financeiro"
+            element={
+              <ProtectedRoute allowedRoles={['ADMIN']}>
+                <AdminDashboard subpage="financeiro" />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/admin/auditoria"
             element={
               <ProtectedRoute allowedRoles={['ADMIN']}>
