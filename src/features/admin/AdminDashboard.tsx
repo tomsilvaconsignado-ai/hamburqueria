@@ -48,6 +48,7 @@ import { AdminStaffUsersPage } from './pages/AdminStaffUsersPage';
 import { AdminAuditLogsPage } from './pages/AdminAuditLogsPage';
 import { AdminCustomersPage } from './pages/AdminCustomersPage';
 import { AdminFinancePage } from './pages/AdminFinancePage';
+import { AdminDeliveryMapPage } from './pages/AdminDeliveryMapPage';
 import { useNewOrderAlert } from './hooks/useNewOrderAlert';
 import { BellOff } from 'lucide-react';
 
@@ -57,6 +58,7 @@ export interface AdminDashboardProps {
     | 'pedidos'
     | 'produtos'
     | 'entregadores'
+    | 'mapa'
     | 'clientes'
     | 'financeiro'
     | 'relatorios'
@@ -72,6 +74,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ subpage = 'dashb
     if (subpage === 'pedidos') return 'pedidos';
     if (subpage === 'produtos') return 'produtos';
     if (subpage === 'entregadores') return 'entregadores';
+    if (subpage === 'mapa') return 'mapa';
     if (subpage === 'clientes') return 'clientes';
     if (subpage === 'financeiro') return 'financeiro';
     if (subpage === 'relatorios') return 'relatorios';
@@ -166,6 +169,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ subpage = 'dashb
                 {activeTab === 'pedidos' && 'Gestão de Pedidos em Tempo Real'}
                 {activeTab === 'produtos' && 'Cardápio & Catálogo de Produtos'}
                 {activeTab === 'entregadores' && 'Gestão de Entregadores & Frota'}
+                {activeTab === 'mapa' && 'Mapa de Entregas ao Vivo'}
                 {activeTab === 'clientes' && 'Clientes & Relacionamento'}
                 {activeTab === 'financeiro' && 'Financeiro & Fechamento de Caixa'}
                 {activeTab === 'relatorios' && 'Relatórios de Vendas & Desempenho'}
@@ -322,6 +326,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ subpage = 'dashb
               onCloseCreateModal={() => setOpenNewCourierModal(false)}
             />
           )}
+
+          {activeTab === 'mapa' && <AdminDeliveryMapPage orders={orders} couriers={couriers} settings={settings} />}
 
           {activeTab === 'relatorios' && (
             <AdminReportsPage settings={settings} />

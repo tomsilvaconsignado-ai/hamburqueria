@@ -184,6 +184,9 @@ export interface Order {
   cash_change_for_cents?: number; // troco solicitado (pagamento em dinheiro)
   cancellation_reason?: string;
   estimated_delivery_time?: string;
+  /** Distância e tempo da rota de carro da loja ao endereço (taxa por distância) */
+  delivery_distance_m?: number;
+  delivery_duration_s?: number;
   items: OrderItem[];
   guest_token_hash?: string;
   guest_access_token?: string; // Disponibilizado apenas na criação para o cliente
@@ -308,6 +311,53 @@ export interface StoreSettings {
     type: 'INFO' | 'WARNING' | 'ALERT';
   };
   timezone: string;
+  /** ZONE = taxa pela zona do bairro; DISTANCE = taxa pelos km de rota (Mapbox) */
+  delivery_pricing_mode?: DeliveryPricingMode;
+  store_latitude?: number;
+  store_longitude?: number;
+  delivery_base_fee_cents?: number;
+  delivery_included_km?: number;
+  delivery_fee_per_km_cents?: number;
+  delivery_max_km?: number;
+}
+
+export type DeliveryPricingMode = 'ZONE' | 'DISTANCE';
+
+/** Resposta de quote_delivery (prévia da taxa; o pedido recalcula no servidor) */
+export interface DeliveryQuote {
+  ok: boolean;
+  error?: string;
+  mode?: DeliveryPricingMode;
+  zone_name?: string;
+  fee_cents?: number;
+  minutes?: number;
+  minimum_cents?: number;
+  distance_m?: number;
+  duration_s?: number;
+  approximate?: boolean;
+}
+
+/** Última posição de um entregador em rota */
+export interface CourierLocation {
+  courier_id: string;
+  latitude: number;
+  longitude: number;
+  accuracy_m?: number;
+  heading?: number;
+  speed_mps?: number;
+  updated_at: string;
+}
+
+/** Resposta de get_order_tracking (rastreio do pedido pelo cliente) */
+export interface OrderTracking {
+  active: boolean;
+  status: OrderStatus;
+  courier_name?: string;
+  has_location?: boolean;
+  latitude?: number;
+  longitude?: number;
+  heading?: number;
+  updated_at?: string;
 }
 
 export interface OrderStatusHistory {

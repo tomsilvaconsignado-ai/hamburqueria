@@ -18,6 +18,7 @@ import { formatDateTimeBR } from '../../lib/formatters/date';
 import { getMyOrders, subscribeToRealtime, updateOrderStatus } from '../../services/storage';
 import { useAuth } from '../auth/AuthContext';
 import { appUrl } from '../../lib/appUrl';
+import { LiveTrackingMap } from './LiveTrackingMap';
 
 interface OrderTrackingModalProps {
   isOpen: boolean;
@@ -356,6 +357,8 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
                 )}
               </div>
             )}
+
+            <LiveTrackingMap order={selectedOrder} />
 
             {/* Items summary */}
             <div className="p-5 rounded-2xl bg-zinc-900/60 border border-zinc-800 space-y-3">

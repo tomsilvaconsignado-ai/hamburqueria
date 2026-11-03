@@ -10,11 +10,14 @@ import {
   DollarSign,
   AlertCircle,
   ExternalLink,
+  Map as MapIcon,
+  Radio,
 } from 'lucide-react';
 import { Order, Courier } from '../../types';
 import {
   getOrders,
   getCourierByUserId,
+  getStoreSettings,
   toggleCourierAvailability,
   subscribeToRealtime,
   updateCourierDeliveryStatus,
@@ -22,7 +25,18 @@ import {
 import { formatCentsToBRL } from '../../lib/formatters/currency';
 import { formatDateTimeBR } from '../../lib/formatters/date';
 import { reportResult } from '../../lib/reportResult';
+import { formatDistance, formatDuration, isMapboxEnabled, storeLngLat } from '../../lib/mapbox';
 import { useAuth } from '../auth/AuthContext';
+import { useCourierLocation, type LocationStatus } from './useCourierLocation';
+import { CourierRouteMap } from './CourierRouteMap';
+
+const LOCATION_NOTICE: Partial<Record<LocationStatus, { text: string; tone: 'ok' | 'warn' }>> = {
+  waiting: { text: 'Ativando o GPS… permita a localização quando o navegador pedir.', tone: 'warn' },
+  sharing: { text: 'Sua localização está sendo enviada ao cliente enquanto a entrega está em rota. Mantenha o app aberto.', tone: 'ok' },
+  denied: { text: 'Localização bloqueada: libere nas permissões do navegador para o cliente acompanhar a entrega.', tone: 'warn' },
+  unsupported: { text: 'Este aparelho não informa a localização; o cliente não verá o mapa ao vivo.', tone: 'warn' },
+  error: { text: 'Não foi possível enviar sua localização agora. Confira o sinal do GPS e da internet.', tone: 'warn' },
+};
 
 export const DeliveryPanel: React.FC = () => {
   const { user } = useAuth();
@@ -54,6 +68,15 @@ export const DeliveryPanel: React.FC = () => {
 
   const currentDeliveries = orders.filter((o) => o.status !== 'CONCLUIDO' && o.status !== 'CANCELADO');
   const completedDeliveries = orders.filter((o) => o.status === 'CONCLUIDO');
+
+  // GPS: ligado com entregas atribuídas; posição enviada ao cliente só com pedido em rota
+  const isCourier = !isAdmin && Boolean(courierData);
+  const onRoute = isCourier && currentDeliveries.some((o) => o.status === 'EM_ENTREGA');
+  const { position, status: locationStatus } = useCourierLocation(isCourier && currentDeliveries.length > 0, onRoute);
+  const store = storeLngLat(getStoreSettings());
+  const [mapOrderId, setMapOrderId] = useState<string | null>(null);
+  const shownMapId =
+    mapOrderId ?? currentDeliveries.find((o) => o.status === 'EM_ENTREGA')?.id ?? currentDeliveries[0]?.id ?? null;
 
   const handleAction = async (order: Order, action: 'PICKUP' | 'DELIVERED') => {
     const collectOnDelivery = order.payment_status === 'PAGAMENTO_NA_ENTREGA';
@@ -198,6 +221,20 @@ export const DeliveryPanel: React.FC = () => {
         </button>
       </div>
 
+      {/* Compartilhamento de localização (rastreio ao vivo do cliente) */}
+      {onRoute && LOCATION_NOTICE[locationStatus] && (
+        <div
+          className={`p-3 rounded-2xl border text-xs flex items-start gap-2 ${
+            LOCATION_NOTICE[locationStatus]!.tone === 'ok'
+              ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
+              : 'bg-amber-950/40 border-amber-500/40 text-amber-200'
+          }`}
+        >
+          <Radio className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>{LOCATION_NOTICE[locationStatus]!.text}</span>
+        </div>
+      )}
+
       {/* Content */}
       {activeTab === 'current' ? (
         <div className="space-y-4">
@@ -281,6 +318,32 @@ export const DeliveryPanel: React.FC = () => {
                           <ExternalLink className="w-3 h-3 ml-0.5" />
                         </a>
                       </div>
+
+                      {order.delivery_distance_m != null && (
+                        <p className="text-[11px] text-zinc-400">
+                          Rota da loja: {formatDistance(order.delivery_distance_m)}
+                          {order.delivery_duration_s ? ` · ~${formatDuration(order.delivery_duration_s)}` : ''}
+                        </p>
+                      )}
+
+                      {isMapboxEnabled &&
+                        (shownMapId === order.id ? (
+                          <CourierRouteMap
+                            address={addr}
+                            store={store}
+                            courier={position}
+                            label={`${order.order_number} · ${order.customer_name}`}
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setMapOrderId(order.id)}
+                            className="w-full flex items-center justify-center gap-1.5 py-2 rounded-xl bg-zinc-800/70 hover:bg-zinc-800 text-zinc-200 text-xs font-bold transition cursor-pointer"
+                          >
+                            <MapIcon className="w-3.5 h-3.5" />
+                            Ver mapa e rota
+                          </button>
+                        ))}
                     </div>
                   )}
 

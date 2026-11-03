@@ -21,6 +21,7 @@ import { orderService } from '../../services/order.service';
 import { paymentService } from '../../services/payment.service';
 import { IS_DEMO_MODE, getOrderById, getStoreSettings, subscribeToRealtime } from '../../services/storage';
 import { formatCep, lookupCep } from '../../lib/viacep';
+import { formatDistance } from '../../lib/mapbox';
 
 // Dados do último pedido neste aparelho, para não digitar tudo de novo
 const LAST_CHECKOUT_KEY = 'bh_last_checkout_v1';
@@ -71,6 +72,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, o
     discountCents,
     deliveryFeeCents,
     deliveryZoneFound,
+    deliveryQuote,
     totalCents,
     fulfillmentType,
     setFulfillmentType,
@@ -585,14 +587,36 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, o
               <div className="space-y-3 p-4 rounded-2xl bg-zinc-900/60 border border-zinc-800/80">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold uppercase tracking-wider text-amber-400">3. Endereço de Entrega</label>
-                  <span className="text-[11px] text-zinc-400">
-                    {neighborhood.trim()
+                  <span className="text-[11px] text-zinc-400" aria-live="polite">
+                    {deliveryQuote.byDistance
+                      ? !street.trim() || !number.trim() || !neighborhood.trim()
+                        ? 'Informe rua, número e bairro para calcular a taxa'
+                        : deliveryQuote.loading
+                        ? 'Calculando a distância…'
+                        : deliveryQuote.result?.ok
+                        ? `Taxa: ${formatCentsToBRL(deliveryFeeCents)}${
+                            deliveryQuote.result.distance_m ? ` · ${formatDistance(deliveryQuote.result.distance_m)}` : ''
+                          }`
+                        : 'Não entregamos nesse endereço'
+                      : neighborhood.trim()
                       ? deliveryZoneFound
                         ? `Taxa: ${formatCentsToBRL(deliveryFeeCents)}`
                         : 'Bairro fora da área de entrega'
                       : 'Informe o bairro para calcular a taxa'}
                   </span>
                 </div>
+
+                {deliveryQuote.byDistance && deliveryQuote.result && !deliveryQuote.loading && (
+                  deliveryQuote.result.ok ? (
+                    deliveryQuote.result.approximate && (
+                      <p className="text-[11px] text-amber-300/90">
+                        Não achamos o número exato no mapa; a taxa foi calculada pela rua. Confira o endereço.
+                      </p>
+                    )
+                  ) : (
+                    <p className="text-[11px] text-rose-300">{deliveryQuote.result.error}</p>
+                  )
+                )}
 
                 {usedLast && (
                   <p className="text-[11px] text-zinc-400">

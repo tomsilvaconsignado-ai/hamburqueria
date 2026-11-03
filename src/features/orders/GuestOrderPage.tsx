@@ -4,6 +4,7 @@ import { Order, OrderStatus } from '../../types';
 import { getOrderByGuestToken, loadOrderByGuestToken, subscribeToRealtime } from '../../services/storage';
 import { formatCentsToBRL } from '../../lib/formatters/currency';
 import { formatDateTimeBR } from '../../lib/formatters/date';
+import { LiveTrackingMap } from './LiveTrackingMap';
 import {
   Bike,
   Store,
@@ -232,6 +233,8 @@ export const GuestOrderPage: React.FC = () => {
             </div>
           </div>
         )}
+
+        <LiveTrackingMap order={order} />
 
         {/* Items */}
         <div className="p-5 rounded-2xl bg-[#141620] border border-zinc-800 space-y-3">

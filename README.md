@@ -112,7 +112,37 @@ a partir de `.env.example` com a URL e a anon key exibidas pelo `supabase start`
 Os cálculos rodam no banco, no fuso da loja, sobre todo o histórico. Testes do banco: `npm run test:db`
 (aplica todas as migrações num Postgres em memória e testa permissões e regras; também roda no CI).
 
-## 6. Estrutura
+## 6. Mapas e entregas com Mapbox (migração `20261103000000`)
+
+- **Taxa por distância**: em Configurações → *Taxa de Entrega & Localização da Loja*, escolha "Por distância",
+  marque a loja no mapa e defina taxa base, km incluídos, valor por km extra e raio máximo. O servidor
+  (`compute_delivery`) geocodifica o endereço, pede a rota de carro ao Mapbox e calcula a taxa; o checkout mostra
+  a prévia (`quote_delivery`) e `create_order` recalcula tudo e grava `delivery_distance_m`/`delivery_duration_s`.
+  Se o Mapbox falhar, vale a zona do bairro. A distância de cada endereço fica 24 h em cache e há um limite de
+  60 consultas por minuto para proteger a cota gratuita.
+- **Entregador**: mapa com a rota (do GPS do celular, ou da loja) até o cliente, além dos links do Google Maps/Waze.
+- **Rastreio ao vivo**: com o pedido em rota e o painel do entregador aberto, o celular envia a posição a cada
+  ~15 s (`courier_report_location`). O cliente vê o entregador no mapa pelo acompanhamento (logado ou pelo link
+  do convidado, `get_order_tracking`). Só a última posição é guardada, só durante a entrega, e ela é apagada ao
+  concluir. O navegador pausa o GPS com a tela apagada ou o app em segundo plano.
+- **Mapa de Entregas** (admin): pedidos abertos e entregadores em rota em tempo real.
+
+Dois tokens do Mapbox (conta gratuita em mapbox.com → *Tokens*), ambos públicos (`pk.`):
+
+| Token | Onde fica | Restrição de URL |
+| --- | --- | --- |
+| Site (mapas no navegador) | `VITE_MAPBOX_TOKEN` em `.env.production` | Sim: o domínio do site |
+| Servidor (taxa por distância) | `private.app_secrets` no banco (fora da API) | Não (o banco não envia Referer) |
+
+```sql
+INSERT INTO private.app_secrets (name, value) VALUES ('mapbox_server_token', 'pk.SEU_TOKEN')
+ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW();
+```
+
+A migração liga a extensão `http` do Supabase (requisição síncrona a partir do banco). Sem o token do site os
+mapas somem e o resto do app funciona igual; sem o token do servidor a taxa fica por bairro.
+
+## 7. Estrutura
 
 | Caminho | Conteúdo |
 | --- | --- |
@@ -122,12 +152,13 @@ Os cálculos rodam no banco, no fuso da loja, sobre todo o histórico. Testes do
 | `src/services/orderStateMachine.ts` | Regras de transição de status (espelho das regras do banco) |
 | `src/lib/documents/` | Documentos impressos (HTML + CSS de impressão) |
 | `src/lib/whatsapp.ts`, `src/lib/viacep.ts` | Mensagens/links de WhatsApp e consulta de CEP |
+| `src/lib/mapbox.ts`, `src/components/map/` | Geocodificação/rota no navegador e o mapa (carregado sob demanda) |
 | `supabase/migrations/` | Esquema, RLS, trigger de estados e funções transacionais |
 | `supabase/tests/` | Testes do banco (PGlite) |
 | `supabase/functions/` | Pagamento (Mercado Pago), webhook e criação de funcionários |
 | `docs/` | Prompt original do projeto e referências visuais |
 
-## 7. Limitações conhecidas
+## 8. Limitações conhecidas
 
 - Endereços salvos em "Minha Conta" ainda são apenas visuais (não persistem na tabela `customer_addresses`);
   o checkout reaproveita os dados do último pedido feito no mesmo aparelho.
@@ -135,5 +166,7 @@ Os cálculos rodam no banco, no fuso da loja, sobre todo o histórico. Testes do
   histórico no servidor.
 - Notificações (tabela `notifications`) ainda não são enviadas; o acompanhamento é feito pelo Realtime.
 - Taxas do Mercado Pago não são registradas automaticamente; lance-as como despesa para o saldo ficar correto.
-- Mapa: há link para o OpenStreetMap no pedido; cálculo de distância/taxa por raio ainda não foi implementado
-  (a taxa continua por bairro/zona).
+- Rastreio ao vivo é pelo navegador: com a tela apagada o GPS pausa. Rastreio em segundo plano exigiria um
+  app nativo para o entregador.
+- O Mapbox gratuito cobre 50 mil carregamentos de mapa e 100 mil geocodificações/rotas por mês; o painel mostra
+  as consultas do servidor nas últimas 24 h.

@@ -15,9 +15,17 @@ import {
   PauseCircle,
   PlayCircle,
   ShieldAlert,
+  Navigation,
 } from 'lucide-react';
 import { StoreSettings, DeliveryZone, PaymentMethod } from '../../../types';
 import {
+  DeliveryPricingSettings,
+  deliveryPricingChanges,
+  deliveryPricingFormFrom,
+  type DeliveryPricingForm,
+} from '../components/DeliveryPricingSettings';
+import {
+  IS_DEMO_MODE,
   updateStoreSettings,
   setStoreStatus,
   saveDeliveryZone,
@@ -95,12 +103,23 @@ export const AdminSettingsPage: React.FC<AdminSettingsPageProps> = ({
   const [zoneEstimatedMin, setZoneEstimatedMin] = useState(35);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
 
+  // Taxa por distância: só aparece depois que o banco recebeu a atualização de mapas
+  const pricingSupported = IS_DEMO_MODE || settings.delivery_pricing_mode !== undefined;
+  const [pricing, setPricing] = useState<DeliveryPricingForm>(() => deliveryPricingFormFrom(settings));
+
   const handleSaveGeneralSettings = async (e: React.FormEvent) => {
     e.preventDefault();
 
     const minCents = Math.round(parseFloat(minOrderStr.replace(',', '.')) * 100);
+    const pricingResult = pricingSupported ? deliveryPricingChanges(pricing) : {};
+    if (pricingResult.error) {
+      setFeedbackMsg(pricingResult.error);
+      setTimeout(() => setFeedbackMsg(null), 5000);
+      return;
+    }
 
     const res = await updateStoreSettings({
+      ...pricingResult.changes,
       store_name: storeName.trim(),
       tagline: tagline.trim(),
       phone: phone.trim(),
@@ -441,6 +460,19 @@ export const AdminSettingsPage: React.FC<AdminSettingsPageProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Taxa de entrega por distância e localização da loja (Mapbox) */}
+        {pricingSupported && (
+          <div className="p-6 rounded-3xl bg-[#141620] border border-zinc-800 space-y-4">
+            <div className="flex items-center space-x-2">
+              <Navigation className="w-5 h-5 text-amber-400" />
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+                Taxa de Entrega & Localização da Loja
+              </h3>
+            </div>
+            <DeliveryPricingSettings value={pricing} onChange={setPricing} storeAddress={address} />
+          </div>
+        )}
 
         {/* Section 5: Delivery Zones & Fees by Neighborhood */}
         <div className="p-6 rounded-3xl bg-[#141620] border border-zinc-800 space-y-4">

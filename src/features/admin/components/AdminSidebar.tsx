@@ -15,6 +15,7 @@ import {
   ExternalLink,
   Contact,
   Wallet,
+  Map as MapIcon,
 } from 'lucide-react';
 import { StoreSettings } from '../../../types';
 import { appUrl } from '../../../lib/appUrl';
@@ -24,6 +25,7 @@ export type AdminTab =
   | 'pedidos'
   | 'produtos'
   | 'entregadores'
+  | 'mapa'
   | 'clientes'
   | 'financeiro'
   | 'relatorios'
@@ -75,6 +77,13 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
       label: 'Entregadores & Frotas',
       path: '/admin/entregadores',
       icon: Bike,
+      badge: undefined,
+    },
+    {
+      id: 'mapa' as AdminTab,
+      label: 'Mapa de Entregas',
+      path: '/admin/mapa',
+      icon: MapIcon,
       badge: undefined,
     },
     {

@@ -5,13 +5,16 @@ import {
   CartItem,
   Category,
   Courier,
+  CourierLocation,
   CourierStatus,
+  DeliveryQuote,
   DeliveryZone,
   FulfillmentType,
   Order,
   OrderAddressSnapshot,
   OrderItem,
   OrderStatus,
+  OrderTracking,
   PaymentMethod,
   Product,
   StoreSettings,
@@ -374,7 +377,8 @@ const SETTINGS_COLUMNS = [
   'store_name', 'tagline', 'logo_path', 'phone', 'whatsapp', 'address', 'is_open', 'accepting_orders',
   'store_status', 'opening_hours', 'detailed_hours', 'minimum_order_cents', 'default_preparation_minutes',
   'delivery_enabled', 'pickup_enabled', 'pickup_instructions', 'accepted_payment_methods',
-  'customer_announcement', 'timezone',
+  'customer_announcement', 'timezone', 'delivery_pricing_mode', 'store_latitude', 'store_longitude',
+  'delivery_base_fee_cents', 'delivery_included_km', 'delivery_fee_per_km_cents', 'delivery_max_km',
 ];
 
 function withId(row: Record<string, unknown>, id?: string) {
@@ -472,4 +476,61 @@ export function remoteToggleUserStatus(userId: string, isActive: boolean): Promi
 export async function remotePromoteAdmin(email: string): Promise<{ success: boolean; message: string }> {
   const res = await rpcResult('admin_promote_user', { p_email: email.trim().toLowerCase() }, ['staff']);
   return { success: res.success, message: res.success ? 'Usuário promovido a administrador.' : res.error || 'Falha.' };
+}
+
+// --- MAPAS E RASTREIO (Mapbox) ---
+export async function remoteQuoteDelivery(address: Partial<OrderAddressSnapshot>): Promise<DeliveryQuote> {
+  const { data, error } = await db().rpc('quote_delivery', { p_address: address });
+  if (error || !data) return { ok: false, error: errorMessage(error) };
+  return data as DeliveryQuote;
+}
+
+export async function remoteReportCourierLocation(position: {
+  latitude: number;
+  longitude: number;
+  accuracy?: number | null;
+  heading?: number | null;
+  speed?: number | null;
+}): Promise<{ success: boolean; tracking?: boolean; error?: string }> {
+  const { data, error } = await db().rpc('courier_report_location', {
+    p_latitude: position.latitude,
+    p_longitude: position.longitude,
+    p_accuracy: position.accuracy ?? null,
+    p_heading: position.heading ?? null,
+    p_speed: position.speed ?? null,
+  });
+  if (error) return { success: false, error: errorMessage(error) };
+  return { success: true, tracking: Boolean((data as { tracking?: boolean } | null)?.tracking) };
+}
+
+export async function remoteGetOrderTracking(orderId: string, guestToken?: string): Promise<OrderTracking | null> {
+  const { data, error } = await db().rpc('get_order_tracking', {
+    p_order_id: orderId,
+    p_guest_token: guestToken ?? getGuestTokenForOrder(orderId) ?? null,
+  });
+  if (error || !data) return null;
+  return data as OrderTracking;
+}
+
+export async function remoteGetCourierLocations(): Promise<CourierLocation[]> {
+  const { data, error } = await db().from('courier_locations').select('*');
+  if (error) return [];
+  return (data ?? []).map((r) => clean<CourierLocation>(r));
+}
+
+/** Avisa quando alguma posição de entregador muda (painel do admin). */
+export function remoteSubscribeCourierLocations(onChange: () => void): () => void {
+  const channel = db()
+    .channel(`courier-locations-${Math.random().toString(36).slice(2)}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'courier_locations' }, onChange)
+    .subscribe();
+  return () => {
+    db().removeChannel(channel);
+  };
+}
+
+export async function remoteMapboxStatus(): Promise<{ server_token: boolean; store_location: boolean; calls_today: number } | null> {
+  const { data, error } = await db().rpc('admin_mapbox_status');
+  if (error || !data) return null;
+  return data as { server_token: boolean; store_location: boolean; calls_today: number };
 }

@@ -39,6 +39,21 @@ ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
 CREATE FUNCTION storage.foldername(name text) RETURNS text[] LANGUAGE sql IMMUTABLE AS $$
   SELECT (string_to_array(name, '/'))[1:array_length(string_to_array(name, '/'), 1) - 1] $$;
 CREATE PUBLICATION supabase_realtime;
+-- Extensão http (Mapbox): respostas simuladas por padrão de URL em test_http; chamadas ficam em test_http_calls
+CREATE TABLE public.test_http (url_like text, status int, body text);
+CREATE TABLE public.test_http_calls (url text, at timestamptz DEFAULT now());
+CREATE TYPE extensions.http_response AS (status int, content_type text, headers text, content text);
+CREATE FUNCTION extensions.urlencode(s text) RETURNS text LANGUAGE sql IMMUTABLE AS $$
+  SELECT replace(replace(replace(s, ' ', '+'), ',', '%2C'), '|', '%7C') $$;
+CREATE FUNCTION extensions.http_set_curlopt(k text, v text) RETURNS boolean LANGUAGE sql AS $$ SELECT true $$;
+CREATE FUNCTION extensions.http_get(p_url text) RETURNS extensions.http_response LANGUAGE plpgsql AS $$
+DECLARE r record;
+BEGIN
+  INSERT INTO public.test_http_calls (url) VALUES (p_url);
+  SELECT * INTO r FROM public.test_http WHERE p_url LIKE url_like LIMIT 1;
+  IF NOT FOUND THEN RAISE EXCEPTION 'sem resposta simulada para %', p_url; END IF;
+  RETURN ROW(r.status, 'application/json', '', r.body)::extensions.http_response;
+END $$;
 `;
 
 export const ids = {
@@ -74,8 +89,8 @@ const one = async (sql, params = []) => (await db.query(sql, params)).rows[0];
 
 await db.exec(stubs);
 await db.exec(`SET search_path = public, extensions`);
-// pgcrypto já está simulado em extensions (ver stubs)
-const migration = (f) => fs.readFileSync(new URL(f, dir), 'utf8').replace(/CREATE EXTENSION IF NOT EXISTS "?pgcrypto"?[^;]*;/gi, '');
+// pgcrypto e http já estão simulados em extensions (ver stubs)
+const migration = (f) => fs.readFileSync(new URL(f, dir), 'utf8').replace(/CREATE EXTENSION IF NOT EXISTS "?(pgcrypto|http)"?[^;]*;/gi, '');
 console.log('Migrações');
 for (const f of migrations) {
   try { await db.exec(migration(f)); ok(f); }

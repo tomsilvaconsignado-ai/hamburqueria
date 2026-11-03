@@ -1,7 +1,13 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { CartItem, Product, SelectedOption, FulfillmentType, OrderAddressSnapshot } from '../../types';
-import { calculateDeliveryFee } from '../../services/storage';
+import { CartItem, Product, SelectedOption, FulfillmentType, OrderAddressSnapshot, DeliveryQuote } from '../../types';
+import { IS_DEMO_MODE, calculateDeliveryFee, getStoreSettings, quoteDelivery } from '../../services/storage';
 import { getEffectivePriceCents } from '../../lib/formatters/currency';
+
+export interface DeliveryQuoteState {
+  byDistance: boolean;
+  loading: boolean;
+  result?: DeliveryQuote;
+}
 
 interface CartContextType {
   items: CartItem[];
@@ -22,6 +28,8 @@ interface CartContextType {
   deliveryFeeCents: number;
   /** false quando o bairro informado não pertence a nenhuma zona de entrega ativa */
   deliveryZoneFound: boolean;
+  /** Prévia da taxa por distância (quando a loja cobra por km) */
+  deliveryQuote: DeliveryQuoteState;
   totalCents: number;
   isCartOpen: boolean;
   setIsCartOpen: (open: boolean) => void;
@@ -126,11 +134,45 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const discountCents = appliedCoupon === 'BEMVINDO20' ? Math.round(subtotalCents * 0.2) : 0;
 
-  // Prévia: o servidor recalcula a taxa pela zona do bairro ao criar o pedido
+  // Taxa por distância: o servidor consulta o Mapbox (prévia com espera curta após a digitação)
+  const byDistance = !IS_DEMO_MODE && getStoreSettings().delivery_pricing_mode === 'DISTANCE';
+  const addressKey =
+    fulfillmentType === 'DELIVERY' && deliveryAddress
+      ? [deliveryAddress.street, deliveryAddress.number, deliveryAddress.neighborhood, deliveryAddress.city, deliveryAddress.state, deliveryAddress.postal_code]
+          .map((p) => (p ?? '').trim())
+          .join('|')
+      : '';
+  const addressComplete = Boolean(
+    deliveryAddress?.street.trim() && deliveryAddress.number.trim() && deliveryAddress.neighborhood.trim()
+  );
+  const [quote, setQuote] = useState<{ key: string; result?: DeliveryQuote }>({ key: '' });
+  useEffect(() => {
+    if (!byDistance || !addressComplete || !deliveryAddress) return;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      const result = await quoteDelivery(deliveryAddress);
+      if (!cancelled) setQuote({ key: addressKey, result });
+    }, 700);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [byDistance, addressKey]);
+  const currentQuote = quote.key === addressKey ? quote.result : undefined;
+  const deliveryQuote: DeliveryQuoteState = {
+    byDistance,
+    loading: byDistance && addressComplete && !currentQuote,
+    result: byDistance ? currentQuote : undefined,
+  };
+
+  // Prévia: o servidor recalcula a taxa (zona do bairro ou distância) ao criar o pedido
   const feePreview =
-    fulfillmentType === 'DELIVERY' && deliveryAddress ? calculateDeliveryFee(deliveryAddress.neighborhood) : null;
-  const deliveryZoneFound = fulfillmentType === 'PICKUP' || Boolean(feePreview?.zone);
-  const deliveryFeeCents = feePreview?.fee_cents ?? 0;
+    fulfillmentType === 'DELIVERY' && deliveryAddress && !byDistance ? calculateDeliveryFee(deliveryAddress.neighborhood) : null;
+  const deliveryZoneFound =
+    fulfillmentType === 'PICKUP' || (byDistance ? Boolean(currentQuote?.ok) : Boolean(feePreview?.zone));
+  const deliveryFeeCents = byDistance
+    ? (currentQuote?.ok && fulfillmentType === 'DELIVERY' ? currentQuote.fee_cents ?? 0 : 0)
+    : feePreview?.fee_cents ?? 0;
 
   const totalCents = Math.max(0, subtotalCents - discountCents + deliveryFeeCents);
 
@@ -156,6 +198,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setDeliveryAddress,
         deliveryFeeCents,
         deliveryZoneFound,
+        deliveryQuote,
         totalCents,
         isCartOpen,
         setIsCartOpen,

@@ -12,7 +12,11 @@ import {
   NotificationItem,
   AuditLog,
   Courier,
+  CourierLocation,
   CourierStatus,
+  DeliveryQuote,
+  OrderAddressSnapshot,
+  OrderTracking,
 } from '../types';
 import {
   INITIAL_CATEGORIES,
@@ -415,6 +419,42 @@ export function calculateDeliveryFee(neighborhood: string): {
     return { fee_cents: matched.fee_cents, estimated_minutes: matched.estimated_minutes, zone: matched };
   }
   return { fee_cents: 0, estimated_minutes: 0 };
+}
+
+// --- MAPAS E RASTREIO (Mapbox; no modo demonstração a taxa é sempre por bairro) ---
+
+/** Prévia da taxa calculada pelo servidor (por distância ou por bairro). */
+export async function quoteDelivery(address: Partial<OrderAddressSnapshot>): Promise<DeliveryQuote> {
+  if (!IS_DEMO_MODE) return remote.remoteQuoteDelivery(address);
+  const fee = calculateDeliveryFee(address.neighborhood ?? '');
+  return fee.zone
+    ? { ok: true, mode: 'ZONE', zone_name: fee.zone.name, fee_cents: fee.fee_cents, minutes: fee.estimated_minutes }
+    : { ok: false, error: 'Ainda não entregamos no bairro informado. Escolha retirada no balcão.' };
+}
+
+export function reportCourierLocation(position: Parameters<typeof remote.remoteReportCourierLocation>[0]) {
+  if (IS_DEMO_MODE) return Promise.resolve({ success: true, tracking: false });
+  return remote.remoteReportCourierLocation(position);
+}
+
+export function getOrderTracking(orderId: string, guestToken?: string): Promise<OrderTracking | null> {
+  if (IS_DEMO_MODE) return Promise.resolve(null);
+  return remote.remoteGetOrderTracking(orderId, guestToken);
+}
+
+export function getCourierLocations(): Promise<CourierLocation[]> {
+  if (IS_DEMO_MODE) return Promise.resolve([]);
+  return remote.remoteGetCourierLocations();
+}
+
+export function subscribeToCourierLocations(onChange: () => void): () => void {
+  if (IS_DEMO_MODE) return () => {};
+  return remote.remoteSubscribeCourierLocations(onChange);
+}
+
+export function getMapboxStatus() {
+  if (IS_DEMO_MODE) return Promise.resolve(null);
+  return remote.remoteMapboxStatus();
 }
 
 // --- PEDIDOS ---

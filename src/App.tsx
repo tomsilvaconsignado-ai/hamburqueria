@@ -189,6 +189,14 @@ function AppContent() {
             }
           />
           <Route
+            path="/admin/mapa"
+            element={
+              <ProtectedRoute allowedRoles={['ADMIN']}>
+                <AdminDashboard subpage="mapa" />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/admin/configuracoes"
             element={
               <ProtectedRoute allowedRoles={['ADMIN']}>
