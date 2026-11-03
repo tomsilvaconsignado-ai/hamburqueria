@@ -73,6 +73,10 @@ jobs:
         env:
           # Site de projeto fica em https://<usuario>.github.io/<repositorio>/
           VITE_BASE_PATH: /${{ github.event.repository.name }}/
+          # Token público do Mapbox (pk.): Settings > Secrets and variables > Actions > Variables.
+          # Fica fora do Git porque a proteção de segredos do GitHub bloqueia tokens do Mapbox no código.
+          # Vazio = mapas desligados.
+          VITE_MAPBOX_TOKEN: ${{ vars.VITE_MAPBOX_TOKEN }}
         run: |
           # Supabase vem do .env.production versionado (URL + anon key, ambas públicas).
           # Produção nunca pode sair em modo demonstração.

@@ -131,7 +131,7 @@ Dois tokens do Mapbox (conta gratuita em mapbox.com → *Tokens*), ambos públic
 
 | Token | Onde fica | Restrição de URL |
 | --- | --- | --- |
-| Site (mapas no navegador) | `VITE_MAPBOX_TOKEN` em `.env.production` | Sim: o domínio do site |
+| Site (mapas no navegador) | Variável `VITE_MAPBOX_TOKEN` do GitHub Actions (Settings → Secrets and variables → Actions → Variables) | Sim: o domínio do site |
 | Servidor (taxa por distância) | `private.app_secrets` no banco (fora da API) | Não (o banco não envia Referer) |
 
 ```sql
