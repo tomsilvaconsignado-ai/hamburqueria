@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Order } from '../../../types';
+import { playSound } from '../../../lib/sounds';
 
 const PREF_KEY = 'bh_admin_order_alert_v1';
 
@@ -11,29 +12,9 @@ function readPref(): boolean {
   }
 }
 
-let audioCtx: AudioContext | null = null;
-
-/** Dois bipes curtos (Web Audio: sem arquivo de som para baixar). */
+/** Áudio de pedido novo da loja (public/sons/novo-pedido.wav); se falhar, dois bipes. */
 export function playAlertSound() {
-  try {
-    audioCtx ??= new AudioContext();
-    if (audioCtx.state === 'suspended') void audioCtx.resume();
-    const t = audioCtx.currentTime;
-    [0, 0.28].forEach((offset) => {
-      const osc = audioCtx!.createOscillator();
-      const gain = audioCtx!.createGain();
-      osc.type = 'square';
-      osc.frequency.value = 880;
-      gain.gain.setValueAtTime(0.0001, t + offset);
-      gain.gain.exponentialRampToValueAtTime(0.25, t + offset + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + offset + 0.22);
-      osc.connect(gain).connect(audioCtx!.destination);
-      osc.start(t + offset);
-      osc.stop(t + offset + 0.24);
-    });
-  } catch {
-    // navegador sem Web Audio: o aviso visual continua
-  }
+  playSound('novo-pedido');
 }
 
 /**

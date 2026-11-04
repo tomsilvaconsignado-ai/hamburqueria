@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Bike,
   MapPin,
@@ -29,6 +29,8 @@ import { formatDistance, formatDuration, isMapboxEnabled, storeLngLat } from '..
 import { useAuth } from '../auth/AuthContext';
 import { useCourierLocation, type LocationStatus } from './useCourierLocation';
 import { CourierRouteMap } from './CourierRouteMap';
+import { PushToggle } from '../../components/ui/PushToggle';
+import { playSound } from '../../lib/sounds';
 
 const LOCATION_NOTICE: Partial<Record<LocationStatus, { text: string; tone: 'ok' | 'warn' }>> = {
   waiting: { text: 'Ativando o GPS… permita a localização quando o navegador pedir.', tone: 'warn' },
@@ -77,6 +79,20 @@ export const DeliveryPanel: React.FC = () => {
   const [mapOrderId, setMapOrderId] = useState<string | null>(null);
   const shownMapId =
     mapOrderId ?? currentDeliveries.find((o) => o.status === 'EM_ENTREGA')?.id ?? currentDeliveries[0]?.id ?? null;
+
+  // Som "entregador acionado" quando uma entrega nova é atribuída com o painel aberto.
+  // Nos primeiros segundos o app ainda está carregando as entregas que já existiam: não toca.
+  const knownDeliveries = useRef<Set<string> | null>(null);
+  const mountedAt = useRef(Date.now());
+  useEffect(() => {
+    if (!isCourier) return;
+    const ids = currentDeliveries.map((o) => o.id);
+    const settling = Date.now() - mountedAt.current < 4000;
+    if (knownDeliveries.current && !settling && ids.some((id) => !knownDeliveries.current!.has(id))) {
+      playSound('entregador-acionado');
+    }
+    knownDeliveries.current = new Set([...(knownDeliveries.current ?? []), ...ids]);
+  }, [isCourier, currentDeliveries.map((o) => o.id).join('|')]);
 
   const handleAction = async (order: Order, action: 'PICKUP' | 'DELIVERED') => {
     const collectOnDelivery = order.payment_status === 'PAGAMENTO_NA_ENTREGA';
@@ -195,6 +211,8 @@ export const DeliveryPanel: React.FC = () => {
           <span className="text-[10px] text-zinc-400 block">({completedDeliveries.length} entregas)</span>
         </div>
       </div>
+
+      {isCourier && <PushToggle sound="entregador-acionado" />}
 
       {/* Tabs */}
       <div className="grid grid-cols-2 gap-2 p-1.5 rounded-2xl bg-zinc-900 border border-zinc-800">

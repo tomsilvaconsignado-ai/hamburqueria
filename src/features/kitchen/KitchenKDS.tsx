@@ -21,6 +21,7 @@ import { getNextStatus, isOnlinePayment } from '../../services/orderStateMachine
 import { formatTimeBR, getElapsedMinutes } from '../../lib/formatters/date';
 import { reportResult } from '../../lib/reportResult';
 import { useAuth } from '../auth/AuthContext';
+import { PushToggle } from '../../components/ui/PushToggle';
 
 export const KitchenKDS: React.FC = () => {
   const { user } = useAuth();
@@ -296,6 +297,8 @@ export const KitchenKDS: React.FC = () => {
           </button>
         </div>
       </div>
+
+      <PushToggle sound="novo-pedido" />
 
       {/* 4 Kanban Columns */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5 items-start">

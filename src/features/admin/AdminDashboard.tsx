@@ -50,6 +50,7 @@ import { AdminCustomersPage } from './pages/AdminCustomersPage';
 import { AdminFinancePage } from './pages/AdminFinancePage';
 import { AdminDeliveryMapPage } from './pages/AdminDeliveryMapPage';
 import { useNewOrderAlert } from './hooks/useNewOrderAlert';
+import { PushToggle } from '../../components/ui/PushToggle';
 import { BellOff } from 'lucide-react';
 
 export interface AdminDashboardProps {
@@ -277,6 +278,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ subpage = 'dashb
 
         {/* Dynamic Subpage Content */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 space-y-8">
+          {(activeTab === 'dashboard' || activeTab === 'pedidos') && <PushToggle sound="novo-pedido" />}
+
           {activeTab === 'dashboard' && (
             <AdminOverview
               orders={orders}

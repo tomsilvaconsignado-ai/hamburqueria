@@ -34,3 +34,7 @@ file_size_limit = "10MiB"
 # O Mercado Pago não envia JWT do Supabase; a função valida a assinatura x-signature.
 [functions.mercadopago-webhook]
 verify_jwt = false
+
+# Chamada pelo banco (pg_net) com o cabeçalho x-push-secret, não por usuários.
+[functions.send-push]
+verify_jwt = false

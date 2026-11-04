@@ -111,6 +111,78 @@ export default async function ({ db, as, ok, bad, expectOk, expectFail, one, ids
 
   await mapboxCases({ db, as, ok, bad, expectOk, expectFail, one, ids, courierId, payload, count });
   await presentationCases({ db, as, ok, bad, expectOk, expectFail, one, ids, payload });
+  await pushCases({ db, as, ok, bad, expectOk, expectFail, one, ids, courierId, payload });
+}
+
+// Notificações push: inscrição da equipe e chamadas à função send-push por evento
+async function pushCases({ db, as, ok, bad, expectOk, expectFail, one, ids, courierId, payload }) {
+  console.log('\nNotificações push');
+  const sub = (n) => [`https://fcm.googleapis.com/fcm/send/aparelho-${n}`, 'B'.repeat(87), 'a'.repeat(22), 'Chrome Android'];
+  const calls = async () => (await db.query(`SELECT body FROM test_net_calls ORDER BY ctid`)).rows.map((r) => r.body);
+  const reset = () => db.query(`DELETE FROM test_net_calls`);
+
+  await expectFail('visitante não inscreve aparelho', null, `SELECT public.register_push_subscription($1, $2, $3, $4)`, sub(0));
+  await expectFail('cliente não inscreve aparelho', ids.ana, `SELECT public.register_push_subscription($1, $2, $3, $4)`, sub(0));
+  await expectFail('endereço que não é https é recusado', ids.admin, `SELECT public.register_push_subscription('http://x', $1, $2)`, [sub(0)[1], sub(0)[2]]);
+  await expectOk('admin ativa no celular', ids.admin, `SELECT public.register_push_subscription($1, $2, $3, $4)`, sub(1));
+  await expectOk('cozinha ativa no tablet', ids.kitchen, `SELECT public.register_push_subscription($1, $2, $3, $4)`, sub(2));
+  await expectOk('entregador ativa no celular', ids.courier, `SELECT public.register_push_subscription($1, $2, $3, $4)`, sub(3));
+  await expectOk('ativar de novo no mesmo aparelho não duplica', ids.admin, `SELECT public.register_push_subscription($1, $2, $3, $4)`, sub(1));
+  let r = await as(ids.kitchen, `SELECT count(*)::int AS n FROM push_subscriptions`);
+  r.rows[0].n === 1 ? ok('cada um vê só os próprios aparelhos') : bad('cozinha viu ' + r.rows[0].n);
+  await expectFail('ninguém grava inscrição direto na tabela', ids.admin,
+    `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES ($1, 'https://x/y', $2, $3)`, [ids.admin, sub(9)[1], sub(9)[2]]);
+
+  await reset();
+  await expectOk('pedido criado sem a função configurada', ids.ana, `SELECT public.create_order($1::jsonb)`, [payload({ client_request_id: randomUUID() })]);
+  (await calls()).length === 0 ? ok('sem endereço/segredo da função nada é enviado (e o pedido sai)') : bad('enviou sem configuração');
+  await expectFail('teste avisa que falta configurar o servidor', ids.admin, `SELECT public.send_test_push()`);
+
+  await db.query(`INSERT INTO private.app_secrets (name, value) VALUES ('push_function_url', 'https://proj.supabase.co/functions/v1/send-push'), ('push_webhook_secret', 'segredo-teste')
+    ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value`);
+  await expectFail('visitante não lê o segredo das notificações', null, `SELECT value FROM private.app_secrets`);
+
+  await reset();
+  r = await expectOk('pedido com dinheiro na entrega', ids.ana, `SELECT public.create_order($1::jsonb) AS o`, [payload({ client_request_id: randomUUID() })]);
+  const cash = r?.rows[0]?.o;
+  let c = await calls();
+  const toAdmin = c.find((b) => b.url === '/admin/pedidos');
+  const toKitchen = c.find((b) => b.url === '/cozinha');
+  toAdmin?.user_ids?.includes(ids.admin) && /Novo pedido #BH-/.test(toAdmin.title) && /Ana Souza · R\$ [\d,]+ · Entrega/.test(toAdmin.body)
+    ? ok('admin avisado: ' + toAdmin.title + ' — ' + toAdmin.body) : bad('admin: ' + JSON.stringify(c));
+  toKitchen?.user_ids?.includes(ids.kitchen) && toKitchen.sound === 'novo-pedido' ? ok('cozinha avisada com o som de pedido novo') : bad('cozinha: ' + JSON.stringify(c));
+  const headers = (await one(`SELECT headers FROM test_net_calls LIMIT 1`)).headers;
+  headers['x-push-secret'] === 'segredo-teste' ? ok('chamada leva o segredo compartilhado') : bad('cabeçalhos: ' + JSON.stringify(headers));
+
+  await reset();
+  await db.query(`UPDATE store_settings SET payment_demo_mode = TRUE`);
+  r = await as(null, `SELECT public.create_order($1::jsonb) AS o`,
+    [payload({ client_request_id: randomUUID(), payment_method: 'PIX_ONLINE', customer_name: 'Pix Push', customer_phone: '11 94444-0000' })]);
+  const pix = r.rows[0].o;
+  c = await calls();
+  c.length === 1 && c[0].url === '/admin/pedidos' && /aguardando pagamento/.test(c[0].body)
+    ? ok('Pix pendente: só o admin é avisado (cozinha espera o pagamento)') : bad('pix pendente: ' + JSON.stringify(c));
+  await reset();
+  await as(null, `SELECT public.demo_approve_payment($1, $2)`, [pix.order_id, pix.guest_access_token]);
+  c = await calls();
+  c.length === 1 && c[0].url === '/cozinha' && /Pagamento aprovado/.test(c[0].title) ? ok('pagamento aprovado avisa a cozinha') : bad('aprovado: ' + JSON.stringify(c));
+  await db.query(`UPDATE store_settings SET payment_demo_mode = FALSE`);
+
+  await reset();
+  for (const s of ['CONFIRMADO', 'EM_PREPARACAO', 'PRONTO']) await as(ids.admin, `SELECT public.update_order_status($1, $2)`, [cash.order_id, s]);
+  (await calls()).length === 0 ? ok('mudanças de etapa comuns não disparam notificação') : bad('notificou etapa comum');
+  await as(ids.admin, `SELECT public.admin_assign_courier($1, $2)`, [cash.order_id, courierId]);
+  c = await calls();
+  c.length === 1 && c[0].user_ids.length === 1 && c[0].url === '/entregador' && c[0].sound === 'entregador-acionado'
+    && /Nova entrega/.test(c[0].title) && /Rua A, 10 – Centro · cobrar R\$/.test(c[0].body)
+    ? ok('entregador acionado: ' + c[0].title + ' — ' + c[0].body) : bad('entregador: ' + JSON.stringify(c));
+  c[0]?.user_ids?.[0] === ids.courier ? ok('só o entregador atribuído recebe') : bad('destinatário errado');
+
+  r = await expectOk('teste de notificação com tudo configurado', ids.courier, `SELECT public.send_test_push() AS t`);
+  r?.rows[0]?.t?.devices === 1 ? ok('teste enviado para 1 aparelho') : bad('teste: ' + JSON.stringify(r?.rows[0]?.t));
+  await expectOk('desativar no aparelho', ids.courier, `SELECT public.unregister_push_subscription($1)`, [sub(3)[0]]);
+  await expectFail('sem aparelho inscrito o teste avisa', ids.courier, `SELECT public.send_test_push()`);
+  await expectFail('visitante não chama o envio direto', null, `SELECT public.notify_push(ARRAY[$1]::uuid[], 't', 'b', '/', 'x')`, [ids.admin]);
 }
 
 // Modo apresentação: pagamento online aprovado sem gateway, só com o modo ligado

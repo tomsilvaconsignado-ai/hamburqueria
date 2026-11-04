@@ -54,6 +54,11 @@ BEGIN
   IF NOT FOUND THEN RAISE EXCEPTION 'sem resposta simulada para %', p_url; END IF;
   RETURN ROW(r.status, 'application/json', '', r.body)::extensions.http_response;
 END $$;
+-- pg_net (notificações push): as chamadas ficam em test_net_calls
+CREATE TABLE public.test_net_calls (url text, body jsonb, headers jsonb);
+CREATE SCHEMA net;
+CREATE FUNCTION net.http_post(url text, body jsonb DEFAULT '{}', params jsonb DEFAULT '{}', headers jsonb DEFAULT '{}', timeout_milliseconds int DEFAULT 5000)
+RETURNS bigint LANGUAGE sql AS $$ INSERT INTO public.test_net_calls VALUES (url, body, headers) RETURNING 1::bigint $$;
 `;
 
 export const ids = {
@@ -89,8 +94,8 @@ const one = async (sql, params = []) => (await db.query(sql, params)).rows[0];
 
 await db.exec(stubs);
 await db.exec(`SET search_path = public, extensions`);
-// pgcrypto e http já estão simulados em extensions (ver stubs)
-const migration = (f) => fs.readFileSync(new URL(f, dir), 'utf8').replace(/CREATE EXTENSION IF NOT EXISTS "?(pgcrypto|http)"?[^;]*;/gi, '');
+// pgcrypto, http e pg_net já estão simulados (ver stubs)
+const migration = (f) => fs.readFileSync(new URL(f, dir), 'utf8').replace(/CREATE EXTENSION IF NOT EXISTS "?(pgcrypto|http|pg_net)"?[^;]*;/gi, '');
 console.log('Migrações');
 for (const f of migrations) {
   try { await db.exec(migration(f)); ok(f); }
