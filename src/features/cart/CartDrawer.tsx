@@ -30,18 +30,22 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
     appliedCoupon,
     applyCoupon,
     removeCoupon,
+    couponPercent,
   } = useCart();
 
   const [inputCoupon, setInputCoupon] = useState(couponCode || '');
-  const [couponFeedback, setCouponFeedback] = useState<string | null>(null);
+  const [couponFeedback, setCouponFeedback] = useState<{ ok: boolean; text: string } | null>(null);
+  const [checkingCoupon, setCheckingCoupon] = useState(false);
 
   if (!isCartOpen) return null;
 
-  const handleApplyCoupon = (e: React.FormEvent) => {
+  const handleApplyCoupon = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = applyCoupon(inputCoupon);
-    setCouponFeedback(res.message);
-    setTimeout(() => setCouponFeedback(null), 3000);
+    if (!inputCoupon.trim()) return;
+    setCheckingCoupon(true);
+    const res = await applyCoupon(inputCoupon);
+    setCheckingCoupon(false);
+    setCouponFeedback({ ok: res.success, text: res.message });
   };
 
   const isBelowMinimum = fulfillmentType === 'DELIVERY' && totalCents < minimumOrderCents;
@@ -211,19 +215,25 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   </div>
                   <button
                     type="submit"
-                    className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-xl text-xs font-bold transition cursor-pointer"
+                    disabled={checkingCoupon}
+                    className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-60 text-zinc-200 rounded-xl text-xs font-bold transition cursor-pointer"
                   >
-                    Aplicar
+                    {checkingCoupon ? '...' : 'Aplicar'}
                   </button>
                 </form>
-                {couponFeedback && (
-                  <p className="text-[11px] text-amber-400 mt-1 font-medium">{couponFeedback}</p>
+                {couponFeedback && !appliedCoupon && (
+                  <p className={`text-[11px] mt-1 font-medium ${couponFeedback.ok ? 'text-emerald-400' : 'text-rose-300'}`}>
+                    {couponFeedback.text}
+                  </p>
                 )}
                 {appliedCoupon && (
                   <div className="flex items-center justify-between text-xs text-emerald-400 mt-1.5">
-                    <span>Cupom {appliedCoupon} ativo (-20%)</span>
+                    <span>Cupom {appliedCoupon} ativo (-{couponPercent}%)</span>
                     <button
-                      onClick={removeCoupon}
+                      onClick={() => {
+                        removeCoupon();
+                        setCouponFeedback(null);
+                      }}
                       className="text-zinc-400 hover:text-red-400 text-[10px] underline"
                     >
                       Remover

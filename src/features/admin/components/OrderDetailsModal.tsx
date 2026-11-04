@@ -8,6 +8,7 @@ import { buildOrderMessage, MESSAGE_LABELS, OrderMessageKind, suggestedMessageFo
 import { printDeliveryReceipt, printKitchenTicket, printOrderReceipt, printPaymentReceipt } from '../../../lib/documents/templates';
 import type { PaperFormat } from '../../../lib/documents/print';
 import { ADMIN_DATA_AVAILABLE, fetchOrderTimeline, TimelineEntry } from '../../../services/admin.service';
+import { AdminDeliveryCode } from './AdminDeliveryCode';
 
 const ACTOR_LABEL: Record<string, string> = {
   CUSTOMER: 'Cliente',
@@ -194,6 +195,8 @@ export const OrderDetailsModal: React.FC<Props> = ({ order, settings, onClose })
               )}
               {order.cancellation_reason && <p className="text-[11px] text-rose-300">Motivo do cancelamento: {order.cancellation_reason}</p>}
             </section>
+
+            <AdminDeliveryCode order={order} />
           </div>
 
           {/* Coluna 2: linha do tempo, documentos, WhatsApp */}

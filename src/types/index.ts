@@ -193,6 +193,10 @@ export interface Order {
   assigned_courier_id?: string;
   assigned_courier_name?: string;
   assigned_courier_phone?: string;
+  /** Foto do entregador no momento da atribuição (o cliente vê quem vai entregar) */
+  assigned_courier_photo_url?: string;
+  /** O entregador precisa do código do cliente para concluir (o código em si nunca vem aqui) */
+  delivery_code_required?: boolean;
   created_at: string;
   confirmed_at?: string;
   completed_at?: string;
@@ -321,6 +325,42 @@ export interface StoreSettings {
   delivery_max_km?: number;
   /** Modo apresentação: Pix/cartão online aprovados por botão, sem cobrança (antes do Mercado Pago) */
   payment_demo_mode?: boolean;
+  /** Gera o código de entrega de 4 dígitos ao confirmar cada pedido de entrega */
+  delivery_code_auto?: boolean;
+}
+
+export interface Coupon {
+  code: string;
+  description?: string;
+  percent_off: number;
+  is_active: boolean;
+  first_order_only: boolean;
+  max_redemptions?: number;
+  redemptions_count: number;
+  expires_at?: string;
+  min_order_cents?: number;
+  created_at: string;
+}
+
+/** Resposta de validate_coupon */
+export interface CouponCheck {
+  ok: boolean;
+  error?: string;
+  code?: string;
+  percent_off?: number;
+  description?: string;
+  first_order_only?: boolean;
+  min_order_cents?: number;
+}
+
+/** Código de entrega visto pelo admin ou pelo cliente */
+export interface DeliveryCodeInfo {
+  exists: boolean;
+  code?: string;
+  used?: boolean;
+  verified_at?: string;
+  override_note?: string;
+  failed_attempts?: number;
 }
 
 export type DeliveryPricingMode = 'ZONE' | 'DISTANCE';

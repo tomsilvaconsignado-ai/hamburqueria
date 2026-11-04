@@ -14,6 +14,9 @@ import {
   Courier,
   CourierLocation,
   CourierStatus,
+  Coupon,
+  CouponCheck,
+  DeliveryCodeInfo,
   DeliveryQuote,
   OrderAddressSnapshot,
   OrderTracking,
@@ -30,7 +33,7 @@ import {
 import { IS_DEMO_MODE, KEYS, getItem, setItem, subscribeToRealtime } from './cache';
 import { isOnlinePayment, validateStatusChange } from './orderStateMachine';
 import * as remote from './remote';
-import type { CreateOrderParams, Result } from './remote';
+import type { CourierActionResult, CreateOrderParams, Result } from './remote';
 
 /**
  * Fachada de dados usada pelos componentes.
@@ -551,8 +554,20 @@ function createOrderDemo(params: CreateOrderParams): { success: boolean; order?:
     });
   }
 
-  const discount_cents =
-    params.coupon_code?.trim().toUpperCase() === 'BEMVINDO20' ? Math.round(subtotal_cents * 0.2) : 0;
+  // Cupom: mesmas regras do servidor (validate_coupon)
+  let discount_cents = 0;
+  let couponCode: string | undefined;
+  if (params.coupon_code?.trim()) {
+    const check = demoCheckCoupon(params.coupon_code, params.customer_phone, subtotal_cents);
+    if (!check.ok) return { success: false, error: check.error };
+    discount_cents = Math.round((subtotal_cents * (check.percent_off ?? 0)) / 100);
+    couponCode = check.code;
+    setItem(
+      COUPONS_KEY,
+      getDemoCoupons().map((c) => (c.code === check.code ? { ...c, redemptions_count: c.redemptions_count + 1 } : c)),
+      false
+    );
+  }
 
   let delivery_fee_cents = 0;
   let estimated_minutes = settings.default_preparation_minutes;
@@ -596,7 +611,7 @@ function createOrderDemo(params: CreateOrderParams): { success: boolean; order?:
     delivery_fee_cents,
     total_cents: Math.max(0, subtotal_cents - discount_cents + delivery_fee_cents),
     customer_notes: params.customer_notes,
-    coupon_code: discount_cents > 0 ? 'BEMVINDO20' : undefined,
+    coupon_code: discount_cents > 0 ? couponCode : undefined,
     cash_change_for_cents: params.payment_method === 'CASH_ON_DELIVERY' ? params.cash_change_for_cents : undefined,
     estimated_delivery_time: new Date(Date.now() + estimated_minutes * 60000).toISOString(),
     guest_access_token: token,
@@ -656,6 +671,13 @@ export async function updateOrderStatus(
 
   if (newStatus === 'CONFIRMADO') {
     order.confirmed_at = now;
+    // Código de entrega automático (configuração da loja), igual ao servidor
+    if (order.fulfillment_type === 'DELIVERY' && getStoreSettings().delivery_code_auto) {
+      const codes = getItem<Record<string, DemoDeliveryCode>>(CODES_KEY, {});
+      codes[order.id] ??= { code: newDemoCode(), failed_attempts: 0 };
+      setItem(CODES_KEY, codes, false);
+      order.delivery_code_required = true;
+    }
   } else if (newStatus === 'CONCLUIDO') {
     order.completed_at = now;
     // Concluir pedido pago na entrega/balcão = recebido (igual ao servidor)
@@ -747,9 +769,10 @@ export async function updateCourierDeliveryStatus(
   orderId: string,
   courierId: string,
   action: 'PICKUP' | 'OUT_FOR_DELIVERY' | 'DELIVERED',
-  paymentCollected?: boolean
-): Promise<Result> {
-  if (!IS_DEMO_MODE) return remote.remoteCourierAction(orderId, action, paymentCollected);
+  paymentCollected?: boolean,
+  delivery?: { code?: string; overrideNote?: string }
+): Promise<CourierActionResult> {
+  if (!IS_DEMO_MODE) return remote.remoteCourierAction(orderId, action, paymentCollected, delivery);
 
   const order = getOrders().find((o) => o.id === orderId);
   if (!order) return { success: false, error: 'Pedido não encontrado' };
@@ -768,7 +791,43 @@ export async function updateCourierDeliveryStatus(
   if (order.payment_status === 'PAGAMENTO_NA_ENTREGA' && !paymentCollected) {
     return { success: false, error: 'Confirme o recebimento do pagamento antes de concluir a entrega.' };
   }
-  const res = await updateOrderStatus(orderId, 'CONCLUIDO', 'DELIVERY', courierName, 'Entrega confirmada no destino');
+  // Código de entrega (mesmas regras do servidor)
+  const codes = getItem<Record<string, DemoDeliveryCode>>(CODES_KEY, {});
+  const entry = codes[orderId];
+  let reason = 'Entrega confirmada no destino';
+  if (entry) {
+    const typed = delivery?.code?.trim();
+    const note = delivery?.overrideNote?.trim();
+    if (typed) {
+      if (entry.failed_attempts >= 5) {
+        return { success: false, codeError: true, locked: true, error: 'Muitas tentativas erradas. Libere sem código, escrevendo o que aconteceu.' };
+      }
+      if (typed !== entry.code) {
+        entry.failed_attempts += 1;
+        setItem(CODES_KEY, codes, false);
+        return {
+          success: false,
+          codeError: true,
+          locked: entry.failed_attempts >= 5,
+          error: `Código incorreto (tentativa ${entry.failed_attempts} de 5). Confira com o cliente.`,
+        };
+      }
+      entry.verified_at = new Date().toISOString();
+      reason = 'Entrega confirmada com o código do cliente';
+    } else if (note && note.length >= 5) {
+      entry.override_note = note.slice(0, 300);
+      reason = `Entregue sem código: ${note}`.slice(0, 300);
+      logAudit('DELIVERY_WITHOUT_CODE', 'orders', orderId, { order_number: order.order_number, note });
+    } else {
+      return {
+        success: false,
+        codeError: true,
+        error: 'Este pedido tem código de entrega: digite o código do cliente ou escreva o motivo para liberar sem ele.',
+      };
+    }
+    setItem(CODES_KEY, codes, false);
+  }
+  const res = await updateOrderStatus(orderId, 'CONCLUIDO', 'DELIVERY', courierName, reason);
   if (res.success && order.payment_status === 'PAGAMENTO_NA_ENTREGA') {
     const orders = getOrders();
     const o = orders.find((x) => x.id === orderId)!;
@@ -937,4 +996,166 @@ export function downloadCSV(filename: string, csvContent: string): void {
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
+}
+
+// --- CÓDIGO DE ENTREGA (servidor: order_delivery_codes; demonstração: neste navegador) ---
+interface DemoDeliveryCode {
+  code: string;
+  failed_attempts: number;
+  verified_at?: string;
+  override_note?: string;
+}
+const CODES_KEY = 'bh_delivery_codes_v1';
+const newDemoCode = () => String(crypto.getRandomValues(new Uint16Array(1))[0] % 10000).padStart(4, '0');
+
+/** Admin: mostra o código do pedido; com `generate`, cria se ainda não existir. */
+export async function adminDeliveryCode(orderId: string, generate = false): Promise<DeliveryCodeInfo & { error?: string }> {
+  if (!IS_DEMO_MODE) return remote.remoteAdminDeliveryCode(orderId, generate);
+  const codes = getItem<Record<string, DemoDeliveryCode>>(CODES_KEY, {});
+  if (!codes[orderId] && generate) {
+    const orders = getOrders();
+    const order = orders.find((o) => o.id === orderId);
+    if (!order) return { exists: false, error: 'Pedido não encontrado.' };
+    if (order.fulfillment_type !== 'DELIVERY') return { exists: false, error: 'Código de entrega é só para pedidos de entrega.' };
+    if (order.status === 'CONCLUIDO' || order.status === 'CANCELADO') return { exists: false, error: 'Este pedido já foi encerrado.' };
+    codes[orderId] = { code: newDemoCode(), failed_attempts: 0 };
+    setItem(CODES_KEY, codes, false);
+    order.delivery_code_required = true;
+    setItem(KEYS.ORDERS, orders);
+  }
+  const c = codes[orderId];
+  return c ? { exists: true, ...c } : { exists: false };
+}
+
+/** Cliente: código do próprio pedido (o entregador nunca recebe o código). */
+export async function getDeliveryCode(orderId: string, guestToken?: string): Promise<DeliveryCodeInfo | null> {
+  if (!IS_DEMO_MODE) return remote.remoteGetDeliveryCode(orderId, guestToken);
+  const c = getItem<Record<string, DemoDeliveryCode>>(CODES_KEY, {})[orderId];
+  return c ? { exists: true, code: c.code, used: Boolean(c.verified_at || c.override_note) } : { exists: false };
+}
+
+// --- CUPONS (servidor: tabela coupons + validate_coupon; demonstração: neste navegador) ---
+const COUPONS_KEY = 'bh_coupons_v1';
+const DEMO_COUPONS: Coupon[] = [
+  {
+    code: 'BEMVINDO20',
+    description: '20% de desconto no primeiro pedido',
+    percent_off: 20,
+    is_active: true,
+    first_order_only: true,
+    redemptions_count: 0,
+    created_at: new Date(0).toISOString(),
+  },
+];
+const getDemoCoupons = () => getItem<Coupon[]>(COUPONS_KEY, DEMO_COUPONS);
+const phoneKey = (phone?: string) => (phone ?? '').replace(/\D/g, '').slice(-11);
+
+function demoCheckCoupon(code: string, phone?: string, subtotalCents?: number): CouponCheck {
+  const clean = code.trim().toUpperCase();
+  if (!clean) return { ok: false, error: 'Digite o código do cupom.' };
+  const c = getDemoCoupons().find((x) => x.code === clean);
+  if (!c || !c.is_active) return { ok: false, error: 'Cupom não encontrado ou desativado.' };
+  if (c.expires_at && new Date(c.expires_at).getTime() < Date.now()) return { ok: false, error: 'Este cupom já expirou.' };
+  if (c.max_redemptions != null && c.redemptions_count >= c.max_redemptions) {
+    return { ok: false, error: 'Este cupom já atingiu o limite de usos.' };
+  }
+  if (c.min_order_cents != null && subtotalCents != null && subtotalCents < c.min_order_cents) {
+    return { ok: false, error: `Este cupom vale para pedidos a partir de R$ ${(c.min_order_cents / 100).toFixed(2).replace('.', ',')}.` };
+  }
+  const key = phoneKey(phone);
+  if (c.first_order_only && key.length >= 10 && getOrders().some((o) => o.status !== 'CANCELADO' && phoneKey(o.customer_phone) === key)) {
+    return { ok: false, error: `O cupom ${c.code} vale só para o primeiro pedido, e este telefone já pediu antes.` };
+  }
+  return { ok: true, code: c.code, percent_off: c.percent_off, description: c.description, first_order_only: c.first_order_only, min_order_cents: c.min_order_cents };
+}
+
+/** Confere o cupom no servidor (o pedido confere de novo ao ser criado). */
+export function validateCoupon(code: string, phone?: string, subtotalCents?: number): Promise<CouponCheck> {
+  if (!IS_DEMO_MODE) return remote.remoteValidateCoupon(code, phone, subtotalCents);
+  return Promise.resolve(demoCheckCoupon(code, phone, subtotalCents));
+}
+
+export function listCoupons(): Promise<Coupon[]> {
+  if (!IS_DEMO_MODE) return remote.remoteListCoupons();
+  return Promise.resolve(getDemoCoupons());
+}
+
+export async function saveCoupon(coupon: Partial<Coupon> & { code: string }, isNew: boolean): Promise<Result> {
+  if (!IS_DEMO_MODE) return remote.remoteSaveCoupon(coupon, isNew);
+  const code = coupon.code.trim().toUpperCase();
+  const list = getDemoCoupons();
+  if (isNew && list.some((c) => c.code === code)) return { success: false, error: 'Já existe um cupom com esse código.' };
+  const next: Coupon[] = isNew
+    ? [{ redemptions_count: 0, is_active: true, first_order_only: false, percent_off: 10, created_at: new Date().toISOString(), ...coupon, code } as Coupon, ...list]
+    : list.map((c) => (c.code === code ? { ...c, ...coupon, code } : c));
+  setItem(COUPONS_KEY, next);
+  logAudit(isNew ? 'INSERT_COUPONS' : 'UPDATE_COUPONS', 'coupons', code, coupon as Record<string, unknown>);
+  return { success: true };
+}
+
+export async function deleteCoupon(code: string): Promise<Result> {
+  if (!IS_DEMO_MODE) return remote.remoteDeleteCoupon(code);
+  setItem(COUPONS_KEY, getDemoCoupons().filter((c) => c.code !== code));
+  logAudit('DELETE_COUPONS', 'coupons', code);
+  return { success: true };
+}
+
+/** Foto do entregador: reduzida no navegador (até 512 px, JPEG) antes de enviar. */
+export async function uploadCourierPhoto(file: File): Promise<{ success: boolean; url?: string; error?: string }> {
+  if (!/^image\/(jpeg|png|webp|heic|heif)$/.test(file.type)) {
+    return { success: false, error: 'Use uma foto em JPG, PNG ou WebP.' };
+  }
+  if (file.size > 15 * 1024 * 1024) return { success: false, error: 'A foto é muito grande (máximo 15 MB).' };
+  const blob = await resizeImage(file, 512).catch(() => null);
+  if (!blob) return { success: false, error: 'Não foi possível ler a foto. Tente outra imagem.' };
+  if (!IS_DEMO_MODE) return remote.remoteUploadCourierPhoto(blob, 'jpg');
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({ success: true, url: reader.result as string });
+    reader.onerror = () => resolve({ success: false, error: 'Erro ao processar a foto.' });
+    reader.readAsDataURL(blob);
+  });
+}
+
+function resizeImage(file: File, maxSide: number): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('falha ao converter'))), 'image/jpeg', 0.85);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('imagem inválida'));
+    };
+    img.src = url;
+  });
+}
+
+/** Confere o código de entrega antes de seguir para o pagamento (mesmas tentativas do servidor). */
+export async function checkDeliveryCode(orderId: string, code: string): Promise<CourierActionResult> {
+  if (!IS_DEMO_MODE) return remote.remoteCheckDeliveryCode(orderId, code);
+  const codes = getItem<Record<string, DemoDeliveryCode>>(CODES_KEY, {});
+  const entry = codes[orderId];
+  if (!entry) return { success: true };
+  if (entry.failed_attempts >= 5) {
+    return { success: false, codeError: true, locked: true, error: 'Muitas tentativas erradas. Libere sem código, escrevendo o que aconteceu.' };
+  }
+  if (code.trim() !== entry.code) {
+    entry.failed_attempts += 1;
+    setItem(CODES_KEY, codes, false);
+    return {
+      success: false,
+      codeError: true,
+      locked: entry.failed_attempts >= 5,
+      error: `Código incorreto (tentativa ${entry.failed_attempts} de 5). Confira com o cliente.`,
+    };
+  }
+  return { success: true };
 }

@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { Courier, CourierStatus, VehicleType, UserProfile } from '../../../types';
 import { CourierHistoryPanel } from '../components/CourierHistoryPanel';
+import { CourierPhotoInput } from '../components/CourierPhotoInput';
 import {
   saveCourier,
   deleteCourier,
@@ -661,16 +662,7 @@ export const AdminCouriersManager: React.FC<AdminCouriersManagerProps> = ({
                   </div>
                 </div>
 
-                <div>
-                  <label className="text-zinc-400 block mb-1">URL da Foto de Perfil (opcional)</label>
-                  <input
-                    type="url"
-                    value={formPhotoUrl}
-                    onChange={(e) => setFormPhotoUrl(e.target.value)}
-                    placeholder="https://..."
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-2.5 text-white"
-                  />
-                </div>
+                <CourierPhotoInput value={formPhotoUrl} onChange={setFormPhotoUrl} />
               </div>
 
               {/* Vehicle & Operational Info */}

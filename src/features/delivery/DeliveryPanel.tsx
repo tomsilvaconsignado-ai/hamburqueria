@@ -12,6 +12,7 @@ import {
   ExternalLink,
   Map as MapIcon,
   Radio,
+  KeyRound,
 } from 'lucide-react';
 import { Order, Courier } from '../../types';
 import {
@@ -21,6 +22,7 @@ import {
   toggleCourierAvailability,
   subscribeToRealtime,
   updateCourierDeliveryStatus,
+  checkDeliveryCode,
 } from '../../services/storage';
 import { formatCentsToBRL } from '../../lib/formatters/currency';
 import { formatDateTimeBR } from '../../lib/formatters/date';
@@ -30,6 +32,7 @@ import { useAuth } from '../auth/AuthContext';
 import { useCourierLocation, type LocationStatus } from './useCourierLocation';
 import { CourierRouteMap } from './CourierRouteMap';
 import { ConfirmPaymentModal } from './ConfirmPaymentModal';
+import { DeliveryCodeModal, type DeliveryAuth } from './DeliveryCodeModal';
 import { STATUS_LABEL } from '../../lib/labels';
 import { PushToggle } from '../../components/ui/PushToggle';
 import { playSound } from '../../lib/sounds';
@@ -96,30 +99,74 @@ export const DeliveryPanel: React.FC = () => {
     knownDeliveries.current = new Set([...(knownDeliveries.current ?? []), ...ids]);
   }, [isCourier, currentDeliveries.map((o) => o.id).join('|')]);
 
-  // Pagamento na entrega: antes de concluir, o entregador confirma o recebimento na janela própria
+  // Concluir a entrega: 1) código do cliente (se o pedido tiver), 2) recebimento (se pago na entrega)
   const [paymentOrder, setPaymentOrder] = useState<Order | null>(null);
+  const [codeOrder, setCodeOrder] = useState<Order | null>(null);
+  const [codeError, setCodeError] = useState<{ text: string; locked: boolean } | null>(null);
   const [concluding, setConcluding] = useState(false);
+  const pendingAuth = useRef<DeliveryAuth | undefined>(undefined);
 
-  const runAction = async (order: Order, action: 'PICKUP' | 'DELIVERED', paymentCollected = false) => {
-    const res = await updateCourierDeliveryStatus(order.id, order.assigned_courier_id ?? '', action, paymentCollected);
+  const runAction = async (order: Order, action: 'PICKUP' | 'DELIVERED', paymentCollected = false, auth?: DeliveryAuth) => {
+    const res = await updateCourierDeliveryStatus(order.id, order.assigned_courier_id ?? '', action, paymentCollected, auth);
+    if (res.codeError) {
+      // Código errado/bloqueado: volta para a janela do código com a mensagem do servidor
+      setPaymentOrder(null);
+      setCodeOrder(order);
+      setCodeError({ text: res.error ?? 'Código incorreto.', locked: Boolean(res.locked) });
+      return res;
+    }
     reportResult(res);
     return res;
   };
 
-  const handleAction = async (order: Order, action: 'PICKUP' | 'DELIVERED') => {
-    if (action === 'DELIVERED' && order.payment_status === 'PAGAMENTO_NA_ENTREGA') {
+  const finishDelivery = async (order: Order, auth?: DeliveryAuth) => {
+    pendingAuth.current = auth;
+    // Código digitado: confere ANTES de receber o pagamento (é a prova de que é o cliente)
+    if (auth?.code) {
+      setConcluding(true);
+      const check = await checkDeliveryCode(order.id, auth.code);
+      setConcluding(false);
+      if (!check.success) {
+        setCodeError({ text: check.error ?? 'Código incorreto.', locked: Boolean(check.locked) });
+        return;
+      }
+    }
+    if (order.payment_status === 'PAGAMENTO_NA_ENTREGA') {
+      setCodeOrder(null);
       setPaymentOrder(order);
       return;
     }
-    await runAction(order, action);
+    setConcluding(true);
+    const res = await runAction(order, 'DELIVERED', false, auth);
+    setConcluding(false);
+    if (res.success) {
+      setCodeOrder(null);
+      setCodeError(null);
+    }
+  };
+
+  const handleAction = async (order: Order, action: 'PICKUP' | 'DELIVERED') => {
+    if (action === 'PICKUP') {
+      await runAction(order, action);
+      return;
+    }
+    if (order.delivery_code_required) {
+      setCodeError(null);
+      setCodeOrder(order);
+      return;
+    }
+    await finishDelivery(order);
   };
 
   const confirmPayment = async () => {
     if (!paymentOrder) return;
     setConcluding(true);
-    const res = await runAction(paymentOrder, 'DELIVERED', true);
+    const res = await runAction(paymentOrder, 'DELIVERED', true, pendingAuth.current);
     setConcluding(false);
-    if (res.success) setPaymentOrder(null);
+    if (res.success) {
+      setPaymentOrder(null);
+      setCodeError(null);
+    }
   };
 
   if (!user) return null;
@@ -178,9 +225,17 @@ export const DeliveryPanel: React.FC = () => {
       {/* Header Profile */}
       <div className="p-5 rounded-3xl bg-[#141622] border border-zinc-800 shadow-xl flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center space-x-3.5">
-          <div className="w-12 h-12 rounded-2xl bg-amber-500 text-zinc-950 flex items-center justify-center font-black shadow-lg shadow-amber-500/20">
-            <Bike className="w-6 h-6" />
-          </div>
+          {courierData?.photo_url ? (
+            <img
+              src={courierData.photo_url}
+              alt={`Foto de ${courierData.full_name}`}
+              className="w-12 h-12 rounded-2xl object-cover border-2 border-amber-500 shadow-lg shadow-amber-500/20"
+            />
+          ) : (
+            <div className="w-12 h-12 rounded-2xl bg-amber-500 text-zinc-950 flex items-center justify-center font-black shadow-lg shadow-amber-500/20">
+              <Bike className="w-6 h-6" />
+            </div>
+          )}
           <div>
             <div className="flex items-center space-x-2">
               <h1 className="text-lg font-black text-white">{courierName}</h1>
@@ -398,6 +453,16 @@ export const DeliveryPanel: React.FC = () => {
                     </a>
                   </div>
 
+                  {/* Entrega protegida por código: o entregador pede os 4 números ao cliente */}
+                  {order.delivery_code_required && (
+                    <div className="p-3 rounded-xl bg-sky-500/10 border border-sky-500/30 text-sky-200 text-xs flex items-center gap-2">
+                      <KeyRound className="w-4 h-4 shrink-0" />
+                      <span>
+                        Entrega com <strong>código</strong>: ao entregar, peça ao cliente os 4 números que ele vê no app.
+                      </span>
+                    </div>
+                  )}
+
                   {/* Payment notice if cash or card on delivery */}
                   {isPaymentOnDelivery && (
                     <div className="p-3 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-200 text-xs flex items-center justify-between">
@@ -485,6 +550,20 @@ export const DeliveryPanel: React.FC = () => {
             ))
           )}
         </div>
+      )}
+
+      {codeOrder && (
+        <DeliveryCodeModal
+          order={codeOrder}
+          busy={concluding}
+          error={codeError?.text}
+          locked={codeError?.locked}
+          onSubmit={(auth) => finishDelivery(codeOrder, auth)}
+          onCancel={() => {
+            setCodeOrder(null);
+            setCodeError(null);
+          }}
+        />
       )}
 
       {paymentOrder && (

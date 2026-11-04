@@ -6,6 +6,7 @@ import { formatCentsToBRL } from '../../lib/formatters/currency';
 import { formatDateTimeBR } from '../../lib/formatters/date';
 import { LiveTrackingMap } from './LiveTrackingMap';
 import { PendingPaymentCard } from './PendingPaymentCard';
+import { CourierCard, DeliveryCodeCard } from './DeliverySecurityCards';
 import { PAYMENT_METHOD_LABEL, PAYMENT_STATUS_LABEL } from '../../lib/labels';
 import {
   Bike,
@@ -237,6 +238,10 @@ export const GuestOrderPage: React.FC = () => {
             </div>
           </div>
         )}
+
+        {/* Entregador (foto e nome) e código de entrega */}
+        <CourierCard order={order} />
+        <DeliveryCodeCard order={order} />
 
         <LiveTrackingMap order={order} />
 

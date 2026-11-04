@@ -19,7 +19,7 @@ import { PaymentMethod, Order } from '../../types';
 import { formatCentsToBRL, parseBRLToCents } from '../../lib/formatters/currency';
 import { orderService } from '../../services/order.service';
 import { isPresentationPayment, paymentService } from '../../services/payment.service';
-import { IS_DEMO_MODE, getOrderById, getStoreSettings, subscribeToRealtime } from '../../services/storage';
+import { IS_DEMO_MODE, getOrderById, getStoreSettings, subscribeToRealtime, validateCoupon } from '../../services/storage';
 import { formatCep, lookupCep } from '../../lib/viacep';
 import { formatDistance } from '../../lib/mapbox';
 
@@ -79,6 +79,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, o
     deliveryAddress,
     setDeliveryAddress,
     appliedCoupon,
+    removeCoupon,
     clearCart,
   } = useCart();
   const { user } = useAuth();
@@ -140,6 +141,28 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, o
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const errorBox = useRef<HTMLDivElement>(null);
+  // O aviso aparece perto do botão; rola até ele para ninguém achar que "o botão não funciona"
+  useEffect(() => {
+    if (errorMessage) errorBox.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [errorMessage]);
+
+  // Cupom × telefone: a regra de "primeiro pedido" é conferida assim que o telefone é digitado
+  const [couponIssue, setCouponIssue] = useState<string | null>(null);
+  useEffect(() => {
+    setCouponIssue(null);
+    const digits = customerPhone.replace(/\D/g, '');
+    if (!appliedCoupon || digits.length < 10) return;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      const check = await validateCoupon(appliedCoupon, customerPhone, subtotalCents);
+      if (!cancelled && !check.ok) setCouponIssue(check.error ?? 'Este cupom não vale para este pedido.');
+    }, 600);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [appliedCoupon, customerPhone, subtotalCents]);
 
   // Etapa de pagamento online (o pedido já existe e aguarda o gateway)
   const [createdOrder, setCreatedOrder] = useState<Order | null>(null);
@@ -526,12 +549,6 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, o
           </div>
         ) : (
           <form onSubmit={handleCreateOrder} className="p-6 sm:p-8 space-y-6">
-            {errorMessage && (
-              <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center space-x-2">
-                <AlertTriangle className="w-4 h-4 shrink-0" />
-                <span>{errorMessage}</span>
-              </div>
-            )}
 
             {/* 1. Fulfillment Type */}
             <div className="space-y-2">
@@ -805,9 +822,20 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, o
               </div>
               {discountCents > 0 && (
                 <div className="flex justify-between text-emerald-400">
-                  <span>Desconto ({appliedCoupon})</span>
+                  <span>
+                    Desconto ({appliedCoupon}){' '}
+                    <button type="button" onClick={removeCoupon} className="text-[10px] text-zinc-400 underline hover:text-rose-300 cursor-pointer">
+                      remover
+                    </button>
+                  </span>
                   <span>- {formatCentsToBRL(discountCents)}</span>
                 </div>
+              )}
+              {couponIssue && (
+                <p className="text-[11px] text-rose-300 flex items-start gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />
+                  <span>{couponIssue}</span>
+                </p>
               )}
               <div className="flex justify-between">
                 <span>Taxa de Entrega</span>
@@ -821,6 +849,32 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, o
                 Valores, cupom e taxa são conferidos pela loja ao enviar o pedido.
               </p>
             </div>
+
+            {/* Erro do envio logo acima do botão (antes ficava no topo, fora da vista de quem clicava) */}
+            {errorMessage && (
+              <div
+                ref={errorBox}
+                role="alert"
+                className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs space-y-2"
+              >
+                <p className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>{errorMessage}</span>
+                </p>
+                {appliedCoupon && /cupom/i.test(errorMessage) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      removeCoupon();
+                      setErrorMessage(null);
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-100 font-bold cursor-pointer"
+                  >
+                    Remover o cupom e continuar
+                  </button>
+                )}
+              </div>
+            )}
 
             <button
               type="submit"

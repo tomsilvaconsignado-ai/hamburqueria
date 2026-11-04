@@ -16,6 +16,8 @@ import {
   PlayCircle,
   ShieldAlert,
   Navigation,
+  KeyRound,
+  Tag,
 } from 'lucide-react';
 import { StoreSettings, DeliveryZone, PaymentMethod } from '../../../types';
 import {
@@ -24,6 +26,7 @@ import {
   deliveryPricingFormFrom,
   type DeliveryPricingForm,
 } from '../components/DeliveryPricingSettings';
+import { CouponsManager } from '../components/CouponsManager';
 import {
   IS_DEMO_MODE,
   updateStoreSettings,
@@ -109,6 +112,9 @@ export const AdminSettingsPage: React.FC<AdminSettingsPageProps> = ({
   // Modo apresentação: só aparece depois que o banco recebeu a coluna payment_demo_mode
   const demoPaymentSupported = !IS_DEMO_MODE && settings.payment_demo_mode !== undefined;
   const [paymentDemo, setPaymentDemo] = useState(Boolean(settings.payment_demo_mode));
+  // Código de entrega: só aparece depois que o banco recebeu a coluna delivery_code_auto
+  const deliveryCodeSupported = IS_DEMO_MODE || settings.delivery_code_auto !== undefined;
+  const [deliveryCodeAuto, setDeliveryCodeAuto] = useState(Boolean(settings.delivery_code_auto));
 
   const handleSaveGeneralSettings = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -124,6 +130,7 @@ export const AdminSettingsPage: React.FC<AdminSettingsPageProps> = ({
     const res = await updateStoreSettings({
       ...pricingResult.changes,
       ...(demoPaymentSupported ? { payment_demo_mode: paymentDemo } : {}),
+      ...(deliveryCodeSupported ? { delivery_code_auto: deliveryCodeAuto } : {}),
       store_name: storeName.trim(),
       tagline: tagline.trim(),
       phone: phone.trim(),
@@ -612,6 +619,37 @@ export const AdminSettingsPage: React.FC<AdminSettingsPageProps> = ({
           </div>
         </div>
 
+        {/* Segurança na entrega: código de 4 dígitos */}
+        {deliveryCodeSupported && (
+          <div className="p-6 rounded-3xl bg-[#141620] border border-zinc-800 space-y-3">
+            <div className="flex items-center space-x-2">
+              <KeyRound className="w-5 h-5 text-amber-400" />
+              <h3 className="text-sm font-bold text-white uppercase tracking-wider">Segurança na Entrega</h3>
+            </div>
+            <p className="text-xs text-zinc-400">
+              Com o código de entrega, o cliente recebe 4 números no acompanhamento do pedido e passa ao entregador na
+              hora de receber. O entregador só conclui digitando o código, ou libera sem ele escrevendo o motivo, que fica
+              registrado. Você também pode gerar o código só em pedidos específicos, nos detalhes do pedido.
+            </p>
+            <label
+              className={`p-4 rounded-2xl border flex items-start gap-3 cursor-pointer transition text-xs ${
+                deliveryCodeAuto ? 'bg-amber-500/15 border-amber-500/50 text-white' : 'bg-zinc-950 border-zinc-800 text-zinc-300'
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={deliveryCodeAuto}
+                onChange={(e) => setDeliveryCodeAuto(e.target.checked)}
+                className="mt-0.5 rounded accent-amber-500"
+              />
+              <span>
+                <span className="font-bold block">Gerar código automaticamente em todo pedido de entrega</span>
+                <span className="text-[11px] text-zinc-400">O código é criado quando o pedido é confirmado.</span>
+              </span>
+            </label>
+          </div>
+        )}
+
         {/* Section 7: Customer Announcement Banner */}
         <div className="p-6 rounded-3xl bg-[#141620] border border-zinc-800 space-y-4">
           <div className="flex items-center space-x-2">
@@ -659,6 +697,19 @@ export const AdminSettingsPage: React.FC<AdminSettingsPageProps> = ({
           </button>
         </div>
       </form>
+
+      {/* Cupons de desconto (cada ação salva na hora, fora do "Salvar Todas") */}
+      <div className="p-6 rounded-3xl bg-[#141620] border border-zinc-800 space-y-4">
+        <div className="flex items-center space-x-2">
+          <Tag className="w-5 h-5 text-amber-400" />
+          <h3 className="text-sm font-bold text-white uppercase tracking-wider">Cupons de Desconto</h3>
+        </div>
+        <p className="text-xs text-zinc-400">
+          Crie o cupom do dia com o desconto que quiser. O código pode ser sorteado e ditado ao cliente por WhatsApp ou
+          nas redes. Cada cupom é conferido pelo servidor na hora do pedido.
+        </p>
+        <CouponsManager />
+      </div>
 
       {/* Modal: Add Delivery Zone */}
       {isZoneModalOpen && (

@@ -4,8 +4,11 @@ import {
   AuditLog,
   CartItem,
   Category,
+  Coupon,
+  CouponCheck,
   Courier,
   CourierLocation,
+  DeliveryCodeInfo,
   CourierStatus,
   DeliveryQuote,
   DeliveryZone,
@@ -325,20 +328,34 @@ export function remoteAssignCourier(orderId: string, courierId: string): Promise
   return rpcResult('admin_assign_courier', { p_order_id: orderId, p_courier_id: courierId });
 }
 
-export function remoteCourierAction(
+export interface CourierActionResult extends Result {
+  /** Erro do código de entrega (errado, faltando ou bloqueado por tentativas) */
+  codeError?: boolean;
+  locked?: boolean;
+}
+
+export async function remoteCourierAction(
   orderId: string,
   action: 'PICKUP' | 'OUT_FOR_DELIVERY' | 'DELIVERED',
-  paymentCollected?: boolean
-): Promise<Result> {
-  return rpcResult(
-    'courier_update_delivery',
-    {
-      p_order_id: orderId,
-      p_action: action === 'DELIVERED' ? 'DELIVERED' : 'PICKUP',
-      p_payment_collected: Boolean(paymentCollected),
-    },
-    ['orders', 'staff']
-  );
+  paymentCollected?: boolean,
+  delivery?: { code?: string; overrideNote?: string }
+): Promise<CourierActionResult> {
+  const { data, error } = await db().rpc('courier_update_delivery', {
+    p_order_id: orderId,
+    p_action: action === 'DELIVERED' ? 'DELIVERED' : 'PICKUP',
+    p_payment_collected: Boolean(paymentCollected),
+    p_code: delivery?.code ?? null,
+    p_override_note: delivery?.overrideNote ?? null,
+  });
+  if (error) return { success: false, error: errorMessage(error) };
+  // Código errado volta como resposta (não exceção) para a tentativa ficar contada no servidor
+  const res = data as { success?: boolean; error?: string; code_error?: boolean; locked?: boolean } | null;
+  if (res && res.success === false) {
+    return { success: false, error: res.error, codeError: Boolean(res.code_error), locked: Boolean(res.locked) };
+  }
+  await Promise.all([fetchers.orders(), fetchers.staff()]);
+  notifyRealtime();
+  return { success: true };
 }
 
 export async function remoteSetCourierAvailability(courier: Courier, asAdmin: boolean): Promise<Result> {
@@ -379,7 +396,7 @@ const SETTINGS_COLUMNS = [
   'delivery_enabled', 'pickup_enabled', 'pickup_instructions', 'accepted_payment_methods',
   'customer_announcement', 'timezone', 'delivery_pricing_mode', 'store_latitude', 'store_longitude',
   'delivery_base_fee_cents', 'delivery_included_km', 'delivery_fee_per_km_cents', 'delivery_max_km',
-  'payment_demo_mode',
+  'payment_demo_mode', 'delivery_code_auto',
 ];
 
 function withId(row: Record<string, unknown>, id?: string) {
@@ -542,4 +559,85 @@ export function remoteDemoApprovePayment(orderId: string, guestToken?: string): 
     p_order_id: orderId,
     p_guest_token: guestToken ?? getGuestTokenForOrder(orderId) ?? null,
   });
+}
+
+// --- CÓDIGO DE ENTREGA ---
+export async function remoteAdminDeliveryCode(orderId: string, generate: boolean): Promise<DeliveryCodeInfo & { error?: string }> {
+  const { data, error } = await db().rpc('admin_delivery_code', { p_order_id: orderId, p_generate: generate });
+  if (error) return { exists: false, error: errorMessage(error) };
+  if (generate) {
+    await fetchers.orders();
+    notifyRealtime();
+  }
+  return data as DeliveryCodeInfo;
+}
+
+export async function remoteGetDeliveryCode(orderId: string, guestToken?: string): Promise<DeliveryCodeInfo | null> {
+  const { data, error } = await db().rpc('get_delivery_code', {
+    p_order_id: orderId,
+    p_guest_token: guestToken ?? getGuestTokenForOrder(orderId) ?? null,
+  });
+  if (error || !data) return null;
+  return data as DeliveryCodeInfo;
+}
+
+// --- CUPONS ---
+export async function remoteValidateCoupon(code: string, phone?: string, subtotalCents?: number): Promise<CouponCheck> {
+  const { data, error } = await db().rpc('validate_coupon', {
+    p_code: code,
+    p_phone: phone || null,
+    p_subtotal_cents: subtotalCents ?? null,
+  });
+  if (error || !data) return { ok: false, error: error ? errorMessage(error) : 'Não foi possível validar o cupom agora.' };
+  return data as CouponCheck;
+}
+
+const COUPON_COLUMNS = ['code', 'description', 'percent_off', 'is_active', 'first_order_only', 'max_redemptions', 'expires_at', 'min_order_cents'];
+
+export async function remoteListCoupons(): Promise<Coupon[]> {
+  const { data, error } = await db().from('coupons').select('*').order('created_at', { ascending: false });
+  if (error) return [];
+  return (data ?? []).map((r) => clean<Coupon>(r));
+}
+
+export async function remoteSaveCoupon(coupon: Partial<Coupon> & { code: string }, isNew: boolean): Promise<Result> {
+  const row = pick({ ...coupon, code: coupon.code.trim().toUpperCase() }, COUPON_COLUMNS);
+  const { error } = isNew
+    ? await db().from('coupons').insert(row)
+    : await db().from('coupons').update(row).eq('code', coupon.code);
+  if (error) {
+    return {
+      success: false,
+      error: /duplicate|unique/i.test(errorMessage(error)) ? 'Já existe um cupom com esse código.' : errorMessage(error),
+    };
+  }
+  return { success: true };
+}
+
+export async function remoteDeleteCoupon(code: string): Promise<Result> {
+  const { error } = await db().from('coupons').delete().eq('code', code);
+  return error ? { success: false, error: errorMessage(error) } : { success: true };
+}
+
+// --- FOTO DO ENTREGADOR (bucket público courier-photos, nomes aleatórios) ---
+export async function remoteUploadCourierPhoto(file: Blob, ext: string): Promise<{ success: boolean; url?: string; error?: string }> {
+  const path = `${Date.now()}-${crypto.randomUUID()}.${ext}`;
+  const { data, error } = await db().storage.from('courier-photos').upload(path, file, {
+    cacheControl: '31536000',
+    upsert: false,
+    contentType: file.type || `image/${ext}`,
+  });
+  if (error || !data) return { success: false, error: `Falha ao enviar a foto: ${error?.message ?? 'erro desconhecido'}` };
+  return { success: true, url: db().storage.from('courier-photos').getPublicUrl(data.path).data.publicUrl };
+}
+
+/** Confere só o código de entrega (antes do pagamento); conta as tentativas no servidor. */
+export async function remoteCheckDeliveryCode(orderId: string, code: string): Promise<CourierActionResult> {
+  const { data, error } = await db().rpc('courier_check_delivery_code', { p_order_id: orderId, p_code: code });
+  if (error) return { success: false, error: errorMessage(error) };
+  const res = data as { success?: boolean; error?: string; code_error?: boolean; locked?: boolean } | null;
+  if (res && res.success === false) {
+    return { success: false, error: res.error, codeError: Boolean(res.code_error), locked: Boolean(res.locked) };
+  }
+  return { success: true };
 }

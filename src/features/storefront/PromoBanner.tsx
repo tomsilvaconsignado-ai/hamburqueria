@@ -6,8 +6,15 @@ export const PromoBanner: React.FC = () => {
   const { applyCoupon, appliedCoupon } = useCart();
   const [copied, setCopied] = useState(false);
 
-  const handleApplyCoupon = () => {
-    applyCoupon('BEMVINDO20');
+  const [couponError, setCouponError] = useState<string | null>(null);
+
+  const handleApplyCoupon = async () => {
+    const res = await applyCoupon('BEMVINDO20');
+    if (!res.success) {
+      setCouponError(res.message);
+      setTimeout(() => setCouponError(null), 4000);
+      return;
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -59,6 +66,7 @@ export const PromoBanner: React.FC = () => {
                 <Copy className="w-4 h-4" />
               )}
             </button>
+            {couponError && <p className="text-[11px] font-bold text-zinc-900 mt-1.5">{couponError}</p>}
           </div>
 
           {/* Right: Motoboy Graphic and action */}

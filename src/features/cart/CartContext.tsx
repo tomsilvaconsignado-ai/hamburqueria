@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { CartItem, Product, SelectedOption, FulfillmentType, OrderAddressSnapshot, DeliveryQuote } from '../../types';
-import { IS_DEMO_MODE, calculateDeliveryFee, getStoreSettings, quoteDelivery } from '../../services/storage';
+import { IS_DEMO_MODE, calculateDeliveryFee, getStoreSettings, quoteDelivery, validateCoupon } from '../../services/storage';
 import { getEffectivePriceCents } from '../../lib/formatters/currency';
 
 export interface DeliveryQuoteState {
@@ -18,7 +18,9 @@ interface CartContextType {
   subtotalCents: number;
   couponCode: string;
   appliedCoupon: string | null;
-  applyCoupon: (code: string) => { success: boolean; message: string };
+  /** Confere o cupom no servidor; com o telefone, também a regra de primeiro pedido */
+  applyCoupon: (code: string, phone?: string) => Promise<{ success: boolean; message: string }>;
+  couponPercent: number;
   removeCoupon: () => void;
   discountCents: number;
   fulfillmentType: FulfillmentType;
@@ -114,25 +116,30 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem(CART_STORAGE_KEY);
   };
 
-  const applyCoupon = (code: string) => {
-    const clean = code.trim().toUpperCase();
-    if (clean === 'BEMVINDO20') {
-      setAppliedCoupon('BEMVINDO20');
-      setCouponCode('BEMVINDO20');
-      return { success: true, message: 'Cupom BEMVINDO20 aplicado com sucesso: 20% de desconto!' };
-    }
-    return { success: false, message: 'Cupom inválido ou expirado.' };
+  // Cálculos monetários seguros em centavos
+  const subtotalCents = items.reduce((acc, it) => acc + it.total_price_cents, 0);
+
+  // Cupom: conferido no servidor (validade, limite, mínimo, primeiro pedido); o pedido confere de novo
+  const [couponPercent, setCouponPercent] = useState(0);
+  const applyCoupon = async (code: string, phone?: string) => {
+    const check = await validateCoupon(code, phone, subtotalCents);
+    if (!check.ok || !check.code) return { success: false, message: check.error || 'Cupom inválido ou expirado.' };
+    setAppliedCoupon(check.code);
+    setCouponCode(check.code);
+    setCouponPercent(check.percent_off ?? 0);
+    return {
+      success: true,
+      message: `Cupom ${check.code} aplicado: ${check.percent_off}% de desconto${check.first_order_only ? ' (primeiro pedido)' : ''}!`,
+    };
   };
 
   const removeCoupon = () => {
     setAppliedCoupon(null);
     setCouponCode('');
+    setCouponPercent(0);
   };
 
-  // Cálculos monetários seguros em centavos
-  const subtotalCents = items.reduce((acc, it) => acc + it.total_price_cents, 0);
-
-  const discountCents = appliedCoupon === 'BEMVINDO20' ? Math.round(subtotalCents * 0.2) : 0;
+  const discountCents = appliedCoupon ? Math.round((subtotalCents * couponPercent) / 100) : 0;
 
   // Taxa por distância: o servidor consulta o Mapbox (prévia com espera curta após a digitação)
   const byDistance = !IS_DEMO_MODE && getStoreSettings().delivery_pricing_mode === 'DISTANCE';
@@ -190,6 +197,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         couponCode,
         appliedCoupon,
         applyCoupon,
+        couponPercent,
         removeCoupon,
         discountCents,
         fulfillmentType,

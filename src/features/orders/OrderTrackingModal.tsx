@@ -20,6 +20,7 @@ import { useAuth } from '../auth/AuthContext';
 import { appUrl } from '../../lib/appUrl';
 import { LiveTrackingMap } from './LiveTrackingMap';
 import { PendingPaymentCard } from './PendingPaymentCard';
+import { CourierCard, DeliveryCodeCard } from './DeliverySecurityCards';
 import { PAYMENT_METHOD_LABEL, PAYMENT_STATUS_LABEL } from '../../lib/labels';
 
 interface OrderTrackingModalProps {
@@ -333,34 +334,9 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
               </div>
             )}
 
-            {/* Courier Card if assigned */}
-            {selectedOrder.assigned_courier_name && (
-              <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="w-10 h-10 rounded-full bg-amber-500 text-zinc-950 flex items-center justify-center font-black">
-                    <Bike className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <span className="text-[10px] font-black uppercase text-amber-400 tracking-wider">
-                      ENTREGADOR DESIGNADO
-                    </span>
-                    <h4 className="text-sm font-bold text-white">
-                      {selectedOrder.assigned_courier_name}
-                    </h4>
-                  </div>
-                </div>
-
-                {selectedOrder.assigned_courier_phone && (
-                  <a
-                    href={`tel:${selectedOrder.assigned_courier_phone.replace(/\D/g, '')}`}
-                    className="flex items-center space-x-1 px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-700 text-xs font-bold text-amber-300 hover:text-white"
-                  >
-                    <Phone className="w-3.5 h-3.5" />
-                    <span>Ligar</span>
-                  </a>
-                )}
-              </div>
-            )}
+            {/* Entregador (foto e nome) e código de entrega */}
+            <CourierCard order={selectedOrder} />
+            <DeliveryCodeCard order={selectedOrder} />
 
             <LiveTrackingMap order={selectedOrder} />
 

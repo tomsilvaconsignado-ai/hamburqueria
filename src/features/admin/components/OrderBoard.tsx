@@ -1,5 +1,5 @@
 import React from 'react';
-import { Clock, Bike, Store, ChevronRight, AlertTriangle } from 'lucide-react';
+import { Clock, Bike, Store, ChevronRight, AlertTriangle, KeyRound } from 'lucide-react';
 import type { Order, OrderStatus } from '../../../types';
 import { formatCentsToBRL } from '../../../lib/formatters/currency';
 import { getElapsedMinutes, formatTimeBR } from '../../../lib/formatters/date';
@@ -81,6 +81,11 @@ export const OrderBoard: React.FC<Props> = ({ orders, onOpen, onAdvance, onAssig
                   {isDelivery && o.assigned_courier_name && (
                     <p className="text-[11px] text-emerald-300 flex items-center gap-1">
                       <Bike className="w-3 h-3" /> {o.assigned_courier_name}
+                    </p>
+                  )}
+                  {o.delivery_code_required && (
+                    <p className="text-[11px] text-amber-300 flex items-center gap-1">
+                      <KeyRound className="w-3 h-3" /> Entrega com código
                     </p>
                   )}
                 </button>
