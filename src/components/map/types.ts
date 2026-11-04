@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import type { LineString, LngLat } from '../../lib/mapbox';
 
 export type MapMarkerKind = 'store' | 'destination' | 'courier';
@@ -20,4 +21,8 @@ export interface DeliveryMapProps {
   draggableId?: string;
   onMarkerDragEnd?: (id: string, lngLat: LngLat) => void;
   onMapClick?: (lngLat: LngLat) => void;
+  /** Botão "Tela cheia" (padrão: ligado) */
+  allowFullscreen?: boolean;
+  /** Painel exibido embaixo do mapa em tela cheia (ex.: distância e botões de navegação) */
+  fullscreenInfo?: ReactNode;
 }

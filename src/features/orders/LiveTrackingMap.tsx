@@ -83,6 +83,22 @@ export const LiveTrackingMap: React.FC<{ order: Order }> = ({ order }) => {
 
   if (!active) return null;
 
+  const status = (
+    <p className="text-xs text-zinc-300 flex items-center gap-1.5">
+      <Bike className="w-4 h-4 text-emerald-400 shrink-0" />
+      {courier && route ? (
+        <span>
+          {tracking?.courier_name ?? 'O entregador'} está a <strong className="text-white">{formatDistance(route.distance_m)}</strong>
+          {' '}· chega em <strong className="text-white">~{formatDuration(route.duration_s)}</strong>
+        </span>
+      ) : courier ? (
+        <span>{tracking?.courier_name ?? 'O entregador'} está a caminho.</span>
+      ) : (
+        <span>O pedido saiu para entrega. A posição do entregador aparece aqui assim que o GPS dele atualizar.</span>
+      )}
+    </p>
+  );
+
   return (
     <div className="p-4 rounded-2xl bg-zinc-900/80 border border-emerald-500/30 space-y-3">
       <div className="flex items-center justify-between gap-2">
@@ -92,21 +108,24 @@ export const LiveTrackingMap: React.FC<{ order: Order }> = ({ order }) => {
         {tracking?.updated_at && <span className="text-[10px] text-zinc-500">Atualizado {formatAgo(tracking.updated_at)}</span>}
       </div>
 
-      {markers.length > 0 && <DeliveryMap markers={markers} route={courier ? route?.geometry : null} followMarkers className="h-60" />}
+      {markers.length > 0 && (
+        <DeliveryMap
+          markers={markers}
+          route={courier ? route?.geometry : null}
+          followMarkers
+          className="h-60"
+          fullscreenInfo={
+            <div className="space-y-1">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-300 flex items-center gap-1.5">
+                <Radio className="w-3.5 h-3.5" /> Entrega ao vivo · {order.order_number}
+              </p>
+              {status}
+            </div>
+          }
+        />
+      )}
 
-      <p className="text-xs text-zinc-300 flex items-center gap-1.5">
-        <Bike className="w-4 h-4 text-emerald-400 shrink-0" />
-        {courier && route ? (
-          <span>
-            {tracking?.courier_name ?? 'O entregador'} está a <strong className="text-white">{formatDistance(route.distance_m)}</strong>
-            {' '}· chega em <strong className="text-white">~{formatDuration(route.duration_s)}</strong>
-          </span>
-        ) : courier ? (
-          <span>{tracking?.courier_name ?? 'O entregador'} está a caminho.</span>
-        ) : (
-          <span>O pedido saiu para entrega. A posição do entregador aparece aqui assim que o GPS dele atualizar.</span>
-        )}
-      </p>
+      {status}
     </div>
   );
 };

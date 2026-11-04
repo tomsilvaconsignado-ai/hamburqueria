@@ -29,6 +29,7 @@ import { formatDistance, formatDuration, isMapboxEnabled, storeLngLat } from '..
 import { useAuth } from '../auth/AuthContext';
 import { useCourierLocation, type LocationStatus } from './useCourierLocation';
 import { CourierRouteMap } from './CourierRouteMap';
+import { ConfirmPaymentModal } from './ConfirmPaymentModal';
 import { PushToggle } from '../../components/ui/PushToggle';
 import { playSound } from '../../lib/sounds';
 
@@ -94,22 +95,30 @@ export const DeliveryPanel: React.FC = () => {
     knownDeliveries.current = new Set([...(knownDeliveries.current ?? []), ...ids]);
   }, [isCourier, currentDeliveries.map((o) => o.id).join('|')]);
 
+  // Pagamento na entrega: antes de concluir, o entregador confirma o recebimento na janela própria
+  const [paymentOrder, setPaymentOrder] = useState<Order | null>(null);
+  const [concluding, setConcluding] = useState(false);
+
+  const runAction = async (order: Order, action: 'PICKUP' | 'DELIVERED', paymentCollected = false) => {
+    const res = await updateCourierDeliveryStatus(order.id, order.assigned_courier_id ?? '', action, paymentCollected);
+    reportResult(res);
+    return res;
+  };
+
   const handleAction = async (order: Order, action: 'PICKUP' | 'DELIVERED') => {
-    const collectOnDelivery = order.payment_status === 'PAGAMENTO_NA_ENTREGA';
-    if (
-      action === 'DELIVERED' &&
-      collectOnDelivery &&
-      !confirm(`Confirma que recebeu ${formatCentsToBRL(order.total_cents)} do cliente?`)
-    ) {
+    if (action === 'DELIVERED' && order.payment_status === 'PAGAMENTO_NA_ENTREGA') {
+      setPaymentOrder(order);
       return;
     }
-    const res = await updateCourierDeliveryStatus(
-      order.id,
-      order.assigned_courier_id ?? '',
-      action,
-      action === 'DELIVERED' && collectOnDelivery
-    );
-    reportResult(res);
+    await runAction(order, action);
+  };
+
+  const confirmPayment = async () => {
+    if (!paymentOrder) return;
+    setConcluding(true);
+    const res = await runAction(paymentOrder, 'DELIVERED', true);
+    setConcluding(false);
+    if (res.success) setPaymentOrder(null);
   };
 
   if (!user) return null;
@@ -351,6 +360,9 @@ export const DeliveryPanel: React.FC = () => {
                             store={store}
                             courier={position}
                             label={`${order.order_number} · ${order.customer_name}`}
+                            googleMapsUrl={getGpsLink(addr)}
+                            wazeUrl={getWazeLink(addr)}
+                            phone={order.customer_phone}
                           />
                         ) : (
                           <button
@@ -457,6 +469,15 @@ export const DeliveryPanel: React.FC = () => {
             ))
           )}
         </div>
+      )}
+
+      {paymentOrder && (
+        <ConfirmPaymentModal
+          order={paymentOrder}
+          busy={concluding}
+          onConfirm={confirmPayment}
+          onCancel={() => setPaymentOrder(null)}
+        />
       )}
     </div>
   );

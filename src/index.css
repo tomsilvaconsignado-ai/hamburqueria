@@ -1,1 +1,7 @@
 @import "tailwindcss";
+
+/* Mapa em tela cheia: logo e créditos do Mapbox (obrigatórios) acima do painel de baixo */
+.bh-map-fullscreen .mapboxgl-ctrl-bottom-left,
+.bh-map-fullscreen .mapboxgl-ctrl-bottom-right {
+  bottom: var(--bh-map-panel, 0px);
+}
