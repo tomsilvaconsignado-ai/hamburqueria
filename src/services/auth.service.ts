@@ -212,6 +212,24 @@ export const authService = {
     };
   },
 
+  /** Grava a senha nova (sessão aberta pelo link de recuperação do e-mail). */
+  async updatePassword(password: string): Promise<{ success: boolean; message: string }> {
+    if (!isSupabaseConfigured || !supabase) {
+      return { success: false, message: 'Disponível apenas com o app conectado ao servidor.' };
+    }
+    if (password.length < 6) return { success: false, message: 'A senha precisa ter pelo menos 6 caracteres.' };
+    const { error } = await supabase.auth.updateUser({ password });
+    if (error) {
+      return {
+        success: false,
+        message: /session|expired|invalid/i.test(error.message)
+          ? 'O link de recuperação expirou. Peça um novo e-mail de recuperação.'
+          : error.message,
+      };
+    }
+    return { success: true, message: 'Senha alterada! Você já está conectado.' };
+  },
+
   /**
    * Administrador cadastra membro da equipe (COZINHA ou ENTREGADOR).
    * No Supabase usa a Edge Function `admin-create-staff`, que valida o papel do chamador.

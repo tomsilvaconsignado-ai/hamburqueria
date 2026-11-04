@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Flame, Mail, ArrowLeft, CheckCircle2, AlertCircle } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Flame, Mail, ArrowLeft, CheckCircle2, AlertCircle, Lock } from 'lucide-react';
 import { authService } from '../../services/auth.service';
+import { endPasswordRecovery, isPasswordRecovery, supabase } from '../../lib/supabase/client';
 
 export const ForgotPasswordPage: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -17,12 +18,47 @@ export const ForgotPasswordPage: React.FC = () => {
 
     try {
       const res = await authService.resetPassword(email);
-      setSuccessMessage(res.message);
+      if (res.success) setSuccessMessage(res.message);
+      else setErrorMessage(res.message);
     } catch (err: unknown) {
       setErrorMessage(err instanceof Error ? err.message : 'Falha ao solicitar recuperação.');
     } finally {
       setLoading(false);
     }
+  };
+
+  // Chegou pelo link do e-mail: formulário de senha nova
+  const [recovery, setRecovery] = useState(isPasswordRecovery());
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!supabase) return;
+    const { data } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') setRecovery(true);
+    });
+    return () => data.subscription.unsubscribe();
+  }, []);
+
+  const handleNewPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+    if (newPassword !== confirmPassword) {
+      setErrorMessage('As duas senhas não são iguais.');
+      return;
+    }
+    setLoading(true);
+    const res = await authService.updatePassword(newPassword);
+    setLoading(false);
+    if (!res.success) {
+      setErrorMessage(res.message);
+      return;
+    }
+    endPasswordRecovery();
+    setRecovery(false);
+    setSuccessMessage(res.message);
+    setTimeout(() => navigate('/'), 1800);
   };
 
   return (
@@ -51,7 +87,7 @@ export const ForgotPasswordPage: React.FC = () => {
             RECUPERAÇÃO DE SENHA
           </h2>
           <p className="text-xs text-zinc-400 mt-1">
-            Informe o e-mail cadastrado para enviarmos as instruções de redefinição
+            {recovery ? 'Quase lá: escolha sua senha nova' : 'Informe o e-mail cadastrado para enviarmos as instruções de redefinição'}
           </p>
         </div>
       </div>
@@ -79,6 +115,54 @@ export const ForgotPasswordPage: React.FC = () => {
                 <span>Voltar para o Login</span>
               </Link>
             </div>
+          ) : recovery ? (
+            <form onSubmit={handleNewPassword} className="space-y-4">
+              <p className="text-xs text-zinc-300 text-center">Crie sua senha nova. Depois disso você já entra na conta.</p>
+              <div>
+                <label htmlFor="new-password" className="text-xs font-bold uppercase tracking-wider text-zinc-400 block mb-1.5">
+                  Senha nova
+                </label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 absolute left-3.5 top-3.5 text-zinc-500" />
+                  <input
+                    id="new-password"
+                    type="password"
+                    required
+                    minLength={6}
+                    autoComplete="new-password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="Mínimo de 6 caracteres"
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-10 pr-3.5 py-3 text-xs sm:text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500 transition"
+                  />
+                </div>
+              </div>
+              <div>
+                <label htmlFor="confirm-password" className="text-xs font-bold uppercase tracking-wider text-zinc-400 block mb-1.5">
+                  Repita a senha nova
+                </label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 absolute left-3.5 top-3.5 text-zinc-500" />
+                  <input
+                    id="confirm-password"
+                    type="password"
+                    required
+                    minLength={6}
+                    autoComplete="new-password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-10 pr-3.5 py-3 text-xs sm:text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500 transition"
+                  />
+                </div>
+              </div>
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 disabled:opacity-50 text-white font-black text-sm uppercase tracking-wider shadow-xl shadow-red-600/30 transition transform active:scale-98 cursor-pointer"
+              >
+                {loading ? 'Salvando...' : 'Salvar senha nova'}
+              </button>
+            </form>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
