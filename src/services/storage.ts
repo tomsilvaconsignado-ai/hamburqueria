@@ -28,7 +28,7 @@ import {
   INITIAL_COURIERS,
 } from './mockData';
 import { IS_DEMO_MODE, KEYS, getItem, setItem, subscribeToRealtime } from './cache';
-import { validateStatusChange } from './orderStateMachine';
+import { isOnlinePayment, validateStatusChange } from './orderStateMachine';
 import * as remote from './remote';
 import type { CreateOrderParams, Result } from './remote';
 
@@ -658,6 +658,8 @@ export async function updateOrderStatus(
     order.confirmed_at = now;
   } else if (newStatus === 'CONCLUIDO') {
     order.completed_at = now;
+    // Concluir pedido pago na entrega/balcão = recebido (igual ao servidor)
+    if (order.payment_status === 'PAGAMENTO_NA_ENTREGA') order.payment_status = 'PAGO_NA_ENTREGA';
   } else if (newStatus === 'CANCELADO') {
     order.cancelled_at = now;
     order.cancellation_reason = reason?.trim() || 'Cancelado a pedido do cliente';
@@ -688,6 +690,9 @@ export async function assignCourierToOrder(orderId: string, courierId: string, a
   }
   if (order.status === 'EM_ENTREGA' || order.status === 'CONCLUIDO' || order.status === 'CANCELADO') {
     return { success: false, error: `Não é possível atribuir entregador a um pedido ${order.status}.` };
+  }
+  if (isOnlinePayment(order) && order.payment_status !== 'PAGO') {
+    return { success: false, error: 'Aguarde o pagamento online ser aprovado antes de chamar o entregador.' };
   }
 
   const courier = getCourierById(courierId);

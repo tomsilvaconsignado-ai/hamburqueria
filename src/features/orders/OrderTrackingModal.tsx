@@ -19,6 +19,8 @@ import { getMyOrders, subscribeToRealtime, updateOrderStatus } from '../../servi
 import { useAuth } from '../auth/AuthContext';
 import { appUrl } from '../../lib/appUrl';
 import { LiveTrackingMap } from './LiveTrackingMap';
+import { PendingPaymentCard } from './PendingPaymentCard';
+import { PAYMENT_METHOD_LABEL, PAYMENT_STATUS_LABEL } from '../../lib/labels';
 
 interface OrderTrackingModalProps {
   isOpen: boolean;
@@ -244,10 +246,12 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
                   {formatCentsToBRL(selectedOrder.total_cents)}
                 </span>
                 <span className="block text-[10px] text-zinc-400">
-                  {selectedOrder.payment_method.replace('_', ' ')} • {selectedOrder.payment_status}
+                  {PAYMENT_METHOD_LABEL[selectedOrder.payment_method]} • {PAYMENT_STATUS_LABEL[selectedOrder.payment_status]}
                 </span>
               </div>
             </div>
+
+            <PendingPaymentCard order={selectedOrder} />
 
             {/* Link privado de acompanhamento (funciona em qualquer aparelho) */}
             {selectedOrder.guest_access_token && (

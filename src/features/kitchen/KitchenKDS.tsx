@@ -22,6 +22,7 @@ import { formatTimeBR, getElapsedMinutes } from '../../lib/formatters/date';
 import { reportResult } from '../../lib/reportResult';
 import { useAuth } from '../auth/AuthContext';
 import { PushToggle } from '../../components/ui/PushToggle';
+import { ConfirmPaymentModal } from '../delivery/ConfirmPaymentModal';
 
 export const KitchenKDS: React.FC = () => {
   const { user } = useAuth();
@@ -56,9 +57,26 @@ export const KitchenKDS: React.FC = () => {
     !(order.status === 'PRONTO' && order.fulfillment_type === 'DELIVERY') &&
     !(order.status === 'AGUARDANDO_CONFIRMACAO' && isOnlinePayment(order) && order.payment_status !== 'PAGO');
 
+  // Retirada paga no balcão: entregar ao cliente pede a confirmação do recebimento
+  const [payingOrder, setPayingOrder] = useState<Order | null>(null);
+  const [concluding, setConcluding] = useState(false);
+
+  const concludeWithPayment = async () => {
+    if (!payingOrder) return;
+    setConcluding(true);
+    const res = await updateOrderStatus(payingOrder.id, 'CONCLUIDO', user?.role ?? 'KITCHEN', user?.full_name ?? 'Cozinha', 'Entregue no balcão: pagamento recebido');
+    setConcluding(false);
+    reportResult(res);
+    if (res.success) setPayingOrder(null);
+  };
+
   const handleAdvanceStatus = async (order: Order) => {
     const next: OrderStatus | null = getNextStatus(order);
     if (!next || !kitchenCanAdvance(order)) return;
+    if (next === 'CONCLUIDO' && order.payment_status === 'PAGAMENTO_NA_ENTREGA') {
+      setPayingOrder(order);
+      return;
+    }
     const res = await updateOrderStatus(
       order.id,
       next,
@@ -299,6 +317,10 @@ export const KitchenKDS: React.FC = () => {
       </div>
 
       <PushToggle sound="novo-pedido" />
+
+      {payingOrder && (
+        <ConfirmPaymentModal order={payingOrder} busy={concluding} onConfirm={concludeWithPayment} onCancel={() => setPayingOrder(null)} />
+      )}
 
       {/* 4 Kanban Columns */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5 items-start">

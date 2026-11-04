@@ -5,6 +5,8 @@ import { getOrderByGuestToken, loadOrderByGuestToken, subscribeToRealtime } from
 import { formatCentsToBRL } from '../../lib/formatters/currency';
 import { formatDateTimeBR } from '../../lib/formatters/date';
 import { LiveTrackingMap } from './LiveTrackingMap';
+import { PendingPaymentCard } from './PendingPaymentCard';
+import { PAYMENT_METHOD_LABEL, PAYMENT_STATUS_LABEL } from '../../lib/labels';
 import {
   Bike,
   Store,
@@ -180,10 +182,12 @@ export const GuestOrderPage: React.FC = () => {
               {formatCentsToBRL(order.total_cents)}
             </span>
             <span className="text-[10px] text-zinc-400 block">
-              {order.payment_method.replace(/_/g, ' ')}
+              {PAYMENT_METHOD_LABEL[order.payment_method]} · {PAYMENT_STATUS_LABEL[order.payment_status]}
             </span>
           </div>
         </div>
+
+        <PendingPaymentCard order={order} />
 
         {/* Timeline */}
         {order.status === 'CANCELADO' ? (

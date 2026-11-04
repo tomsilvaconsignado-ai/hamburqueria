@@ -30,6 +30,7 @@ import { useAuth } from '../auth/AuthContext';
 import { useCourierLocation, type LocationStatus } from './useCourierLocation';
 import { CourierRouteMap } from './CourierRouteMap';
 import { ConfirmPaymentModal } from './ConfirmPaymentModal';
+import { STATUS_LABEL } from '../../lib/labels';
 import { PushToggle } from '../../components/ui/PushToggle';
 import { playSound } from '../../lib/sounds';
 
@@ -151,7 +152,13 @@ export const DeliveryPanel: React.FC = () => {
     return `https://waze.com/ul?q=${query}&navigate=yes`;
   };
 
-  const totalEarnedCents = completedDeliveries.length * 900; // Taxa de R$ 9,00 por corrida repassada ao entregador
+  // Resumo do dia: entregas concluídas hoje, taxas de entrega e dinheiro recebido (para prestar contas na loja)
+  const today = new Date().toDateString();
+  const deliveredToday = completedDeliveries.filter((o) => new Date(o.completed_at || o.updated_at).toDateString() === today);
+  const feesTodayCents = deliveredToday.reduce((sum, o) => sum + (o.delivery_fee_cents || 0), 0);
+  const cashTodayCents = deliveredToday
+    .filter((o) => o.payment_method === 'CASH_ON_DELIVERY')
+    .reduce((sum, o) => sum + o.total_cents, 0);
 
   return (
     <div className="min-h-screen bg-[#0d0f15] text-white p-4 sm:p-6 max-w-3xl mx-auto space-y-6">
@@ -211,13 +218,15 @@ export const DeliveryPanel: React.FC = () => {
           </div>
         </div>
 
-        {/* Daily summary */}
+        {/* Resumo de hoje */}
         <div className="text-right">
-          <span className="text-[10px] uppercase font-bold text-zinc-400 block">Ganhos do Turno</span>
-          <span className="text-xl font-black text-amber-400 font-['Bebas_Neue',sans-serif]">
-            {formatCentsToBRL(totalEarnedCents)}
+          <span className="text-[10px] uppercase font-bold text-zinc-400 block">Hoje · {deliveredToday.length} entrega(s)</span>
+          <span className="text-xl font-black text-amber-400 font-['Bebas_Neue',sans-serif]" title="Soma das taxas de entrega dos pedidos entregues hoje">
+            {formatCentsToBRL(feesTodayCents)} <span className="text-xs text-zinc-400 font-sans font-bold">em taxas</span>
           </span>
-          <span className="text-[10px] text-zinc-400 block">({completedDeliveries.length} entregas)</span>
+          {cashTodayCents > 0 && (
+            <span className="text-[10px] text-emerald-300 block">Dinheiro recebido: {formatCentsToBRL(cashTodayCents)}</span>
+          )}
         </div>
       </div>
 
@@ -297,7 +306,7 @@ export const DeliveryPanel: React.FC = () => {
                     </div>
 
                     <span className="px-3 py-1 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-black uppercase">
-                      {order.status.replace(/_/g, ' ')}
+                      {STATUS_LABEL[order.status]}
                     </span>
                   </div>
 
@@ -408,9 +417,13 @@ export const DeliveryPanel: React.FC = () => {
                   {/* Operational workflow buttons */}
                   <div className="space-y-2 pt-2">
                     {order.status === 'CONFIRMADO' || order.status === 'EM_PREPARACAO' || order.status === 'AGUARDANDO_CONFIRMACAO' ? (
-                      <div className="w-full py-3 rounded-2xl bg-zinc-900 border border-zinc-800 text-zinc-400 text-xs font-bold flex items-center justify-center space-x-2">
-                        <Clock className="w-4 h-4" />
-                        <span>Pedido ainda em preparo na cozinha</span>
+                      <div className="w-full py-3 px-3 rounded-2xl bg-zinc-900 border border-zinc-800 text-zinc-400 text-xs font-bold flex items-center justify-center gap-2 text-center">
+                        <Clock className="w-4 h-4 shrink-0" />
+                        <span>
+                          {order.status === 'AGUARDANDO_CONFIRMACAO'
+                            ? 'Aguardando a loja confirmar o pedido'
+                            : 'Em preparo na cozinha. Você será avisado quando ficar pronto.'}
+                        </span>
                       </div>
                     ) : order.status === 'PRONTO' ? (
                       <button
@@ -418,7 +431,7 @@ export const DeliveryPanel: React.FC = () => {
                         className="w-full py-3.5 rounded-2xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-black text-xs uppercase tracking-wider flex items-center justify-center space-x-2 shadow-lg shadow-amber-500/20 active:scale-98 cursor-pointer"
                       >
                         <PackageCheck className="w-4 h-4" />
-                        <span>Confirmar Retirada na Hamburgueria</span>
+                        <span>Peguei o pedido · sair para entrega</span>
                       </button>
                     ) : order.status === 'EM_ENTREGA' ? (
                       <button
@@ -426,7 +439,7 @@ export const DeliveryPanel: React.FC = () => {
                         className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white font-black text-xs uppercase tracking-wider flex items-center justify-center space-x-2 shadow-lg shadow-emerald-600/30 active:scale-98 cursor-pointer"
                       >
                         <CheckCircle className="w-4 h-4" />
-                        <span>Confirmar Entrega Concluída com Sucesso</span>
+                        <span>Entreguei ao cliente</span>
                       </button>
                     ) : null}
                   </div>
@@ -463,7 +476,10 @@ export const DeliveryPanel: React.FC = () => {
                   <span className="font-black text-amber-400 text-sm">
                     {formatCentsToBRL(order.total_cents)}
                   </span>
-                  <p className="text-[10px] text-emerald-400">+ R$ 9,00 taxa repasse</p>
+                  <p className="text-[10px] text-emerald-400">
+                    Taxa de entrega {formatCentsToBRL(order.delivery_fee_cents || 0)}
+                    {order.payment_method === 'CASH_ON_DELIVERY' ? ' · recebido em dinheiro' : ''}
+                  </p>
                 </div>
               </div>
             ))

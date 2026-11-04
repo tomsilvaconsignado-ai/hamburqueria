@@ -169,14 +169,21 @@ async function pushCases({ db, as, ok, bad, expectOk, expectFail, one, ids, cour
   await db.query(`UPDATE store_settings SET payment_demo_mode = FALSE`);
 
   await reset();
-  for (const s of ['CONFIRMADO', 'EM_PREPARACAO', 'PRONTO']) await as(ids.admin, `SELECT public.update_order_status($1, $2)`, [cash.order_id, s]);
+  for (const s of ['CONFIRMADO', 'EM_PREPARACAO']) await as(ids.admin, `SELECT public.update_order_status($1, $2)`, [cash.order_id, s]);
   (await calls()).length === 0 ? ok('mudanças de etapa comuns não disparam notificação') : bad('notificou etapa comum');
+  await as(ids.admin, `SELECT public.update_order_status($1, 'PRONTO')`, [cash.order_id]);
+  c = await calls();
+  c.length === 1 && c[0].url === '/admin/pedidos' && /pronto sem entregador/.test(c[0].title)
+    ? ok('pronto sem entregador avisa o admin: ' + c[0].title) : bad('pronto sem entregador: ' + JSON.stringify(c));
+  await reset();
   await as(ids.admin, `SELECT public.admin_assign_courier($1, $2)`, [cash.order_id, courierId]);
   c = await calls();
   c.length === 1 && c[0].user_ids.length === 1 && c[0].url === '/entregador' && c[0].sound === 'entregador-acionado'
-    && /Nova entrega/.test(c[0].title) && /Rua A, 10 – Centro · cobrar R\$/.test(c[0].body)
+    && /Nova entrega/.test(c[0].title) && /Rua A, 10 – Centro · já está pronto, pode retirar · cobrar R\$/.test(c[0].body)
     ? ok('entregador acionado: ' + c[0].title + ' — ' + c[0].body) : bad('entregador: ' + JSON.stringify(c));
   c[0]?.user_ids?.[0] === ids.courier ? ok('só o entregador atribuído recebe') : bad('destinatário errado');
+
+  await flowCases({ db, as, ok, bad, expectOk, expectFail, one, ids, courierId, payload, calls, reset });
 
   r = await expectOk('teste de notificação com tudo configurado', ids.courier, `SELECT public.send_test_push() AS t`);
   r?.rows[0]?.t?.devices === 1 ? ok('teste enviado para 1 aparelho') : bad('teste: ' + JSON.stringify(r?.rows[0]?.t));
@@ -342,4 +349,96 @@ async function mapboxCases({ db, as, ok, bad, expectOk, expectFail, one, ids, co
   (await count(`SELECT count(*) AS n FROM courier_locations`)) === 0 ? ok('entrega concluída apaga a posição do entregador') : bad('posição ficou guardada');
   r = await as(ids.ana, `SELECT public.get_order_tracking($1) AS t`, [oid]);
   r.rows[0].t?.active === false ? ok('pedido concluído não mostra rastreio') : bad('concluído: ' + JSON.stringify(r.rows[0].t));
+}
+
+// Fluxo pedido → entrega: entrega/pagamento acompanham o pedido por qualquer caminho e avisos de cada etapa
+async function flowCases({ db, as, ok, bad, expectOk, expectFail, one, ids, courierId, payload, calls, reset }) {
+  console.log('\nFluxo pedido → entrega');
+  const courier2User = '00000000-0000-0000-0000-00000000000e';
+  await db.query(`INSERT INTO auth.users VALUES ($1, 'moto2@x.com', '{"full_name":"Moto Dois","phone":"11900000003"}', now())`, [courier2User]);
+  await db.query(`UPDATE profiles SET role = 'DELIVERY' WHERE id = $1`, [courier2User]);
+  const courier2 = (await one(`INSERT INTO couriers (user_id, full_name, phone, whatsapp) VALUES ($1, 'Moto Dois', '11900000003', '11900000003') RETURNING id`, [courier2User])).id;
+  await as(courier2User, `SELECT public.register_push_subscription($1, $2, $3)`, ['https://fcm.googleapis.com/fcm/send/aparelho-moto2', 'B'.repeat(87), 'a'.repeat(22)]);
+  const newOrder = async (extra = {}) => (await as(ids.ana, `SELECT public.create_order($1::jsonb) AS o`, [payload({ client_request_id: randomUUID(), ...extra })])).rows[0].o.order_id;
+  const status = (id, s, who = ids.admin, reason = null) => as(who, `SELECT public.update_order_status($1, $2, $3)`, [id, s, reason]);
+  const delivery = (id) => one(`SELECT status, picked_up_at, delivered_at, payment_collected FROM deliveries WHERE order_id = $1`, [id]);
+  const counter = async (cid) => Number((await one(`SELECT completed_deliveries_count AS n FROM couriers WHERE id = $1`, [cid])).n);
+  const to = (c, uid) => c.filter((b) => b.user_ids.includes(uid));
+
+  // Pagamento online pendente não chama entregador
+  await db.query(`UPDATE store_settings SET payment_demo_mode = TRUE`);
+  const pix = await newOrder({ payment_method: 'PIX_ONLINE' });
+  await expectFail('Pix não pago: não atribui entregador', ids.admin, `SELECT public.admin_assign_courier($1, $2)`, [pix, courierId]);
+  await as(ids.ana, `SELECT public.demo_approve_payment($1)`, [pix]);
+  await expectOk('Pix aprovado: atribui normalmente', ids.admin, `SELECT public.admin_assign_courier($1, $2)`, [pix, courierId]);
+  await db.query(`UPDATE store_settings SET payment_demo_mode = FALSE`);
+
+  // Atribuição antecipada, troca de entregador e aviso de pronto
+  const a = await newOrder();
+  await status(a, 'CONFIRMADO');
+  await status(a, 'EM_PREPARACAO');
+  await reset();
+  await as(ids.admin, `SELECT public.admin_assign_courier($1, $2)`, [a, courierId]);
+  let c = await calls();
+  /aguarde: avisamos quando estiver pronto/.test(to(c, ids.courier)[0]?.body) ? ok('atribuído antes de ficar pronto: entregador sabe que deve aguardar') : bad('antecipado: ' + JSON.stringify(c));
+  await reset();
+  await as(ids.admin, `SELECT public.admin_assign_courier($1, $2)`, [a, courier2]);
+  c = await calls();
+  /passada para outro entregador/.test(to(c, ids.courier)[0]?.title) ? ok('troca: o entregador anterior é avisado') : bad('troca anterior: ' + JSON.stringify(c));
+  /Nova entrega/.test(to(c, courier2User)[0]?.title) ? ok('troca: o novo entregador é acionado') : bad('troca novo: ' + JSON.stringify(c));
+  await reset();
+  await status(a, 'PRONTO');
+  c = await calls();
+  c.length === 1 && to(c, courier2User).length === 1 && /pronto para retirar/.test(c[0].title)
+    ? ok('pronto: chama o entregador atribuído para retirar') : bad('pronto: ' + JSON.stringify(c));
+
+  // Admin faz as etapas no lugar do entregador: entrega e pagamento acompanham
+  const before2 = await counter(courier2);
+  await status(a, 'EM_ENTREGA');
+  let d = await delivery(a);
+  d?.status === 'EM_ROTA' && d.picked_up_at ? ok('admin despachou: entrega em rota com horário de saída') : bad('despacho admin: ' + JSON.stringify(d));
+  await status(a, 'CONCLUIDO');
+  d = await delivery(a);
+  const pa = await one(`SELECT o.payment_status AS o, p.status AS p FROM orders o JOIN payments p ON p.order_id = o.id WHERE o.id = $1`, [a]);
+  d?.status === 'ENTREGUE' && d.delivered_at && d.payment_collected ? ok('admin concluiu: entrega ENTREGUE, com horário e valor recebido') : bad('conclusão admin: ' + JSON.stringify(d));
+  pa?.o === 'PAGO_NA_ENTREGA' && pa.p === 'PAGO_NA_ENTREGA' ? ok('pagamento na entrega fica como recebido no pedido e no pagamento') : bad('pagamento: ' + JSON.stringify(pa));
+  (await counter(courier2)) === before2 + 1 ? ok('entrega contada para o entregador (uma vez)') : bad('contador admin: ' + (await counter(courier2)));
+
+  // Caminho do entregador: conta uma vez só
+  const b = await newOrder();
+  for (const s of ['CONFIRMADO', 'EM_PREPARACAO', 'PRONTO']) await status(b, s);
+  await as(ids.admin, `SELECT public.admin_assign_courier($1, $2)`, [b, courierId]);
+  const before1 = await counter(courierId);
+  await as(ids.courier, `SELECT public.courier_update_delivery($1, 'PICKUP')`, [b]);
+  await expectFail('entregador não conclui sem confirmar o recebimento', ids.courier, `SELECT public.courier_update_delivery($1, 'DELIVERED', false)`, [b]);
+  await as(ids.courier, `SELECT public.courier_update_delivery($1, 'DELIVERED', true)`, [b]);
+  (await counter(courierId)) === before1 + 1 ? ok('pelo app do entregador também conta uma vez só') : bad('contador entregador: ' + (await counter(courierId)));
+  d = await delivery(b);
+  d?.status === 'ENTREGUE' && d.payment_collected ? ok('entrega do app: ENTREGUE e valor recebido') : bad('entrega app: ' + JSON.stringify(d));
+
+  // Cancelamentos avisam quem estava no pedido
+  const cOrder = await newOrder();
+  for (const s of ['CONFIRMADO', 'EM_PREPARACAO', 'PRONTO']) await status(cOrder, s);
+  await as(ids.admin, `SELECT public.admin_assign_courier($1, $2)`, [cOrder, courierId]);
+  await as(ids.courier, `SELECT public.courier_update_delivery($1, 'PICKUP')`, [cOrder]);
+  await reset();
+  await status(cOrder, 'CANCELADO', ids.admin, 'Cliente não atende');
+  c = await calls();
+  const cc = to(c, ids.courier)[0];
+  /cancelada/.test(cc?.title) && /Cliente não atende · fale com a loja/.test(cc?.body) ? ok('cancelado em rota: entregador avisado com o motivo') : bad('cancelado em rota: ' + JSON.stringify(c));
+  (await delivery(cOrder))?.status === 'CANCELADA' ? ok('entrega cancelada junto') : bad('entrega não cancelou');
+  const kOrder = await newOrder();
+  await status(kOrder, 'CONFIRMADO');
+  await status(kOrder, 'EM_PREPARACAO');
+  await reset();
+  await status(kOrder, 'CANCELADO', ids.admin, 'Sem ingrediente');
+  c = await calls();
+  to(c, ids.kitchen).some((x) => /cancelado/.test(x.title)) ? ok('cancelado em preparo: cozinha avisada') : bad('cozinha cancel: ' + JSON.stringify(c));
+
+  // Retirada no balcão paga na hora
+  const p = await newOrder({ fulfillment_type: 'PICKUP', delivery_address: null });
+  for (const s of ['CONFIRMADO', 'EM_PREPARACAO', 'PRONTO', 'AGUARDANDO_RETIRADA', 'CONCLUIDO']) await status(p, s, ids.kitchen);
+  const pp = await one(`SELECT o.status, o.payment_status AS o_pay, p.status AS p_pay FROM orders o JOIN payments p ON p.order_id = o.id WHERE o.id = $1`, [p]);
+  pp?.status === 'CONCLUIDO' && pp.o_pay === 'PAGO_NA_ENTREGA' && pp.p_pay === 'PAGO_NA_ENTREGA'
+    ? ok('retirada concluída pela cozinha: pagamento no balcão fica como recebido') : bad('retirada: ' + JSON.stringify(pp));
 }

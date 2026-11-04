@@ -16,6 +16,7 @@ export const ConfirmPaymentModal: React.FC<ConfirmPaymentModalProps> = ({ order,
   const isCash = order.payment_method === 'CASH_ON_DELIVERY';
   const changeFor = isCash ? order.cash_change_for_cents ?? 0 : 0;
   const change = changeFor > order.total_cents ? changeFor - order.total_cents : 0;
+  const doneText = order.fulfillment_type === 'PICKUP' ? 'O pedido será entregue ao cliente no balcão' : 'A entrega será concluída';
 
   useEffect(() => {
     confirmButton.current?.focus();
@@ -93,8 +94,8 @@ export const ConfirmPaymentModal: React.FC<ConfirmPaymentModalProps> = ({ order,
 
           <p className="text-xs text-zinc-400">
             {isCash
-              ? 'Confira o dinheiro antes de confirmar. A entrega será concluída e o valor entra no fechamento do caixa.'
-              : 'Confirme só depois que a maquininha aprovar o pagamento. A entrega será concluída.'}
+              ? `Confira o dinheiro antes de confirmar. ${doneText} e o valor entra no fechamento do caixa.`
+              : `Confirme só depois que a maquininha aprovar o pagamento. ${doneText}.`}
           </p>
 
           <div className="grid grid-cols-1 gap-2.5">

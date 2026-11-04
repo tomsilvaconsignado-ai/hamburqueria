@@ -39,6 +39,7 @@ import { formatCentsToBRL } from '../../../lib/formatters/currency';
 import { formatDateTimeBR } from '../../../lib/formatters/date';
 import { reportResult } from '../../../lib/reportResult';
 import { isOnlinePayment } from '../../../services/orderStateMachine';
+import { ConfirmPaymentModal } from '../../delivery/ConfirmPaymentModal';
 
 interface AdminOrdersManagerProps {
   orders: Order[];
@@ -113,10 +114,41 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
       (!query || o.order_number.toLowerCase().includes(query) || o.customer_name.toLowerCase().includes(query))
   );
 
+  // Pago na entrega/balcão: concluir pede a confirmação do recebimento (mesma janela do entregador)
+  const [payingOrderId, setPayingOrderId] = useState<string | null>(null);
+  const payingOrder = orders.find((o) => o.id === payingOrderId) ?? null;
+  const [concluding, setConcluding] = useState(false);
+
   const handleUpdateStatus = async (orderId: string, nextStatus: OrderStatus) => {
+    const order = orders.find((o) => o.id === orderId);
+    if (nextStatus === 'CONCLUIDO' && order?.payment_status === 'PAGAMENTO_NA_ENTREGA') {
+      setPayingOrderId(orderId);
+      return;
+    }
     const res = await updateOrderStatus(orderId, nextStatus, 'ADMIN', 'Administrador', 'Atualização no painel administrativo');
     reportResult(res);
     onReloadData();
+  };
+
+  const confirmPaymentAndConclude = async () => {
+    if (!payingOrder) return;
+    setConcluding(true);
+    const res = await updateOrderStatus(payingOrder.id, 'CONCLUIDO', 'ADMIN', 'Administrador', 'Concluído no painel: pagamento recebido');
+    setConcluding(false);
+    reportResult(res);
+    if (res.success) setPayingOrderId(null);
+    onReloadData();
+  };
+
+  /** Entregador só pode ser (re)atribuído antes de sair e com o pagamento online aprovado. */
+  const canAssignCourier = (o: Order) =>
+    o.fulfillment_type === 'DELIVERY' &&
+    !['EM_ENTREGA', 'CONCLUIDO', 'CANCELADO'].includes(o.status) &&
+    !(isOnlinePayment(o) && o.payment_status !== 'PAGO');
+
+  const openAssign = (o: Order) => {
+    setAssigningOrderId(o.id);
+    setSelectedCourierId(o.assigned_courier_id ?? '');
   };
 
   const handleConfirmAssignCourier = async () => {
@@ -254,7 +286,7 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
           orders={boardOrders}
           onOpen={setSelectedOrderDetails}
           onAdvance={(o, next) => handleUpdateStatus(o.id, next)}
-          onAssign={(o) => setAssigningOrderId(o.id)}
+          onAssign={openAssign}
         />
       ) : (
       <>
@@ -384,20 +416,26 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                             <span className="text-xs font-semibold text-zinc-200 block">
                               {order.assigned_courier_name}
                             </span>
-                            <button
-                              onClick={() => setAssigningOrderId(order.id)}
-                              className="text-[10px] text-amber-400 hover:underline"
-                            >
-                              Trocar
-                            </button>
+                            {canAssignCourier(order) && (
+                              <button
+                                onClick={() => openAssign(order)}
+                                className="text-[10px] text-amber-400 hover:underline"
+                              >
+                                Trocar
+                              </button>
+                            )}
                           </div>
-                        ) : (
+                        ) : canAssignCourier(order) ? (
                           <button
-                            onClick={() => setAssigningOrderId(order.id)}
+                            onClick={() => openAssign(order)}
                             className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[10px] font-bold transition cursor-pointer"
                           >
                             + Atribuir
                           </button>
+                        ) : (
+                          <span className="text-[11px] text-zinc-500">
+                            {order.status === 'CANCELADO' || order.status === 'CONCLUIDO' ? '—' : 'Após o pagamento'}
+                          </span>
                         )
                       ) : (
                         <span className="text-[11px] text-zinc-400">Retirada Balcão</span>
@@ -473,10 +511,14 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
                             <button
                               onClick={() => handleUpdateStatus(order.id, 'EM_ENTREGA')}
                               disabled={!order.assigned_courier_id}
-                              title={order.assigned_courier_id ? undefined : 'Atribua um entregador antes de despachar'}
+                              title={
+                                order.assigned_courier_id
+                                  ? 'O entregador confirma a retirada no app dele. Use aqui só se ele não conseguir.'
+                                  : 'Atribua um entregador antes de despachar'
+                              }
                               className="px-2.5 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold text-[10px] transition"
                             >
-                              Despachar
+                              Saiu p/ entrega
                             </button>
                           )}
                           {(order.status === 'EM_ENTREGA' || order.status === 'AGUARDANDO_RETIRADA') && (
@@ -525,22 +567,59 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
               <span>Atribuir Entregador Oficial</span>
             </h3>
             <p className="text-xs text-zinc-300">
-              Selecione um motoboy ativo para entrega deste pedido. Somente entregadores ativos podem receber atribuição.
+              Escolha quem vai levar o pedido. Ele recebe o aviso no celular e, quando a cozinha marcar como pronto, é
+              chamado para retirar.
             </p>
 
-            <select
-              value={selectedCourierId}
-              onChange={(e) => setSelectedCourierId(e.target.value)}
-              className="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-3 text-xs text-white"
-            >
-              <option value="">Selecione um motoboy ativo...</option>
-              {activeCouriers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.full_name} ({c.vehicle_type} - {c.phone}){' '}
-                  {c.is_available_for_orders ? '• Livre' : '• Ocupado'}
-                </option>
-              ))}
-            </select>
+            {activeCouriers.length === 0 && (
+              <p className="p-3 rounded-xl bg-amber-950/40 border border-amber-500/40 text-xs text-amber-200">
+                Nenhum entregador ativo. Cadastre em Entregadores & Frotas.
+              </p>
+            )}
+            <div className="space-y-2 max-h-72 overflow-y-auto" role="radiogroup" aria-label="Entregadores ativos">
+              {activeCouriers.map((c) => {
+                const busy = orders.filter(
+                  (o) => o.assigned_courier_id === c.id && o.id !== assigningOrderId && !['CONCLUIDO', 'CANCELADO'].includes(o.status)
+                ).length;
+                const selected = selectedCourierId === c.id;
+                const current = orders.find((o) => o.id === assigningOrderId)?.assigned_courier_id === c.id;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    onClick={() => setSelectedCourierId(c.id)}
+                    className={`w-full text-left p-3 rounded-2xl border transition cursor-pointer ${
+                      selected ? 'bg-amber-500/15 border-amber-500/60' : 'bg-zinc-950 border-zinc-800 hover:border-zinc-600'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-bold text-white">
+                        {c.full_name} {current && <span className="text-[10px] text-amber-400 font-black uppercase">· atual</span>}
+                      </span>
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                          c.is_available_for_orders ? 'bg-emerald-500/20 text-emerald-300' : 'bg-zinc-800 text-zinc-400'
+                        }`}
+                      >
+                        {c.is_available_for_orders ? 'Livre' : 'Em pausa'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-zinc-400 mt-0.5">
+                      {c.vehicle_type}
+                      {c.vehicle_model ? ` ${c.vehicle_model}` : ''} · {c.phone} ·{' '}
+                      {busy === 0 ? 'sem entregas em andamento' : `${busy} entrega(s) em andamento`}
+                    </p>
+                    {!c.user_id && (
+                      <p className="text-[11px] text-rose-300 mt-1">
+                        ⚠️ Sem acesso ao app: não vai ver nem ser avisado desta entrega. Vincule a conta em Entregadores.
+                      </p>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
 
             <div className="flex justify-end space-x-2 pt-2">
               <button
@@ -559,6 +638,15 @@ export const AdminOrdersManager: React.FC<AdminOrdersManagerProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {payingOrder && (
+        <ConfirmPaymentModal
+          order={payingOrder}
+          busy={concluding}
+          onConfirm={confirmPaymentAndConclude}
+          onCancel={() => setPayingOrderId(null)}
+        />
       )}
 
       {/* Modal: Mandatory Cancellation Reason */}
