@@ -110,6 +110,39 @@ export default async function ({ db, as, ok, bad, expectOk, expectFail, one, ids
     ? ok('cada etapa com horário e responsável') : bad('histórico: ' + JSON.stringify(r.rows));
 
   await mapboxCases({ db, as, ok, bad, expectOk, expectFail, one, ids, courierId, payload, count });
+  await presentationCases({ db, as, ok, bad, expectOk, expectFail, one, ids, payload });
+}
+
+// Modo apresentação: pagamento online aprovado sem gateway, só com o modo ligado
+async function presentationCases({ db, as, ok, bad, expectOk, expectFail, one, ids, payload }) {
+  console.log('\nModo apresentação (pagamento simulado)');
+  await db.query(`UPDATE store_settings SET accepted_payment_methods = NULL`);
+  let r = await expectOk('convidado cria pedido com Pix online', null, `SELECT public.create_order($1::jsonb) AS o`,
+    [payload({ client_request_id: randomUUID(), payment_method: 'PIX_ONLINE', customer_name: 'Visitante Demo', customer_phone: '11 95555-0000' })]);
+  const pix = r?.rows[0]?.o;
+  await expectFail('com o modo desligado a aprovação simulada é recusada', null,
+    `SELECT public.demo_approve_payment($1, $2)`, [pix?.order_id, pix?.guest_access_token]);
+  await expectFail('com o pagamento pendente a loja não confirma o pedido', ids.admin,
+    `SELECT public.update_order_status($1, 'CONFIRMADO')`, [pix?.order_id]);
+
+  await db.query(`UPDATE store_settings SET payment_demo_mode = TRUE`);
+  await expectFail('sem o token do pedido não aprova', null, `SELECT public.demo_approve_payment($1)`, [pix?.order_id]);
+  await expectFail('outra cliente não aprova pedido alheio', ids.bia, `SELECT public.demo_approve_payment($1)`, [pix?.order_id]);
+  await expectOk('com o modo ligado o convidado aprova pelo link', null,
+    `SELECT public.demo_approve_payment($1, $2)`, [pix?.order_id, pix?.guest_access_token]);
+  const pay = await one(`SELECT p.status, p.provider, p.external_reference, o.payment_status FROM payments p JOIN orders o ON o.id = p.order_id WHERE p.order_id = $1`, [pix?.order_id]);
+  pay?.status === 'PAGO' && pay.payment_status === 'PAGO' && pay.external_reference === 'APRESENTACAO'
+    ? ok('pedido e pagamento ficam PAGO, marcados como APRESENTACAO') : bad('pagamento: ' + JSON.stringify(pay));
+  await expectOk('a loja confirma o pedido pago', ids.admin, `SELECT public.update_order_status($1, 'CONFIRMADO')`, [pix?.order_id]);
+  r = await as(null, `SELECT public.demo_approve_payment($1, $2) AS a`, [pix?.order_id, pix?.guest_access_token]);
+  r.rows[0].a?.already_paid ? ok('aprovar de novo não muda nada') : bad('segunda aprovação: ' + JSON.stringify(r.rows[0].a));
+
+  r = await expectOk('pedido com dinheiro na entrega', ids.ana, `SELECT public.create_order($1::jsonb) AS o`, [payload({ client_request_id: randomUUID() })]);
+  await expectFail('pagamento na entrega não é aprovado pelo modo apresentação', ids.ana,
+    `SELECT public.demo_approve_payment($1)`, [r?.rows[0]?.o?.order_id]);
+  (await one(`SELECT count(*)::int AS n FROM audit_logs WHERE action = 'DEMO_PAYMENT_APPROVED'`)).n === 1
+    ? ok('aprovação simulada fica na auditoria') : bad('auditoria do modo apresentação');
+  await db.query(`UPDATE store_settings SET payment_demo_mode = FALSE`);
 }
 
 // Taxa por distância (Mapbox simulado em test_http), rota no pedido e rastreio ao vivo

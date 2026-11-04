@@ -106,6 +106,9 @@ export const AdminSettingsPage: React.FC<AdminSettingsPageProps> = ({
   // Taxa por distância: só aparece depois que o banco recebeu a atualização de mapas
   const pricingSupported = IS_DEMO_MODE || settings.delivery_pricing_mode !== undefined;
   const [pricing, setPricing] = useState<DeliveryPricingForm>(() => deliveryPricingFormFrom(settings));
+  // Modo apresentação: só aparece depois que o banco recebeu a coluna payment_demo_mode
+  const demoPaymentSupported = !IS_DEMO_MODE && settings.payment_demo_mode !== undefined;
+  const [paymentDemo, setPaymentDemo] = useState(Boolean(settings.payment_demo_mode));
 
   const handleSaveGeneralSettings = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -120,6 +123,7 @@ export const AdminSettingsPage: React.FC<AdminSettingsPageProps> = ({
 
     const res = await updateStoreSettings({
       ...pricingResult.changes,
+      ...(demoPaymentSupported ? { payment_demo_mode: paymentDemo } : {}),
       store_name: storeName.trim(),
       tagline: tagline.trim(),
       phone: phone.trim(),
@@ -544,9 +548,38 @@ export const AdminSettingsPage: React.FC<AdminSettingsPageProps> = ({
               6. Formas de Pagamento Aceitas
             </h3>
           </div>
+          {demoPaymentSupported && (
+            <label
+              className={`p-4 rounded-2xl border flex items-start gap-3 cursor-pointer transition text-xs ${
+                paymentDemo ? 'bg-amber-500/15 border-amber-500/50 text-white' : 'bg-zinc-950 border-zinc-800 text-zinc-300'
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={paymentDemo}
+                onChange={(e) => {
+                  setPaymentDemo(e.target.checked);
+                  // Para apresentar, Pix e cartão online precisam aparecer no checkout
+                  if (e.target.checked) {
+                    setAcceptedPayments((list) => Array.from(new Set([...list, 'PIX_ONLINE', 'CARD_ONLINE'] as PaymentMethod[])));
+                  }
+                }}
+                className="mt-0.5 rounded accent-amber-500"
+              />
+              <span className="space-y-1">
+                <span className="font-bold block">Modo apresentação (pagamento simulado)</span>
+                <span className="text-[11px] text-zinc-400 block">
+                  Para demonstrar o app antes de configurar o Mercado Pago: Pix e cartão online são aprovados por um botão
+                  no checkout e nenhum valor é cobrado. Os pedidos ficam marcados como "APRESENTACAO" no pagamento e na
+                  auditoria. Desligue antes de começar a vender de verdade.
+                </span>
+              </span>
+            </label>
+          )}
           <p className="text-[11px] text-amber-300/80">
-            Pix e Cartão Online só funcionam com as Edge Functions do Mercado Pago publicadas (create-payment e
-            mercadopago-webhook). Habilite-os somente depois disso.
+            {paymentDemo
+              ? 'Com o modo apresentação ligado, Pix e Cartão Online funcionam sem o Mercado Pago (simulados).'
+              : 'Pix e Cartão Online só funcionam com as Edge Functions do Mercado Pago publicadas (create-payment e mercadopago-webhook). Habilite-os somente depois disso.'}
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">

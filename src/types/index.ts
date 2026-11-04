@@ -319,6 +319,8 @@ export interface StoreSettings {
   delivery_included_km?: number;
   delivery_fee_per_km_cents?: number;
   delivery_max_km?: number;
+  /** Modo apresentação: Pix/cartão online aprovados por botão, sem cobrança (antes do Mercado Pago) */
+  payment_demo_mode?: boolean;
 }
 
 export type DeliveryPricingMode = 'ZONE' | 'DISTANCE';

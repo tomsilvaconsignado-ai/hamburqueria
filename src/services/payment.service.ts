@@ -1,7 +1,13 @@
 import { supabase } from '../lib/supabase/client';
-import { IS_DEMO_MODE, simulateDemoPaymentApproval } from './storage';
-import { getGuestTokenForOrder } from './remote';
+import { IS_DEMO_MODE, getStoreSettings, simulateDemoPaymentApproval } from './storage';
+import { getGuestTokenForOrder, remoteDemoApprovePayment, type Result } from './remote';
 import { Order } from '../types';
+
+/**
+ * Pagamento simulado: modo demonstração (sem Supabase) ou modo apresentação ligado pelo admin
+ * (antes de configurar o Mercado Pago da loja). Nenhum valor é cobrado.
+ */
+export const isPresentationPayment = () => IS_DEMO_MODE || Boolean(getStoreSettings().payment_demo_mode);
 
 export interface OnlinePaymentResult {
   success: boolean;
@@ -53,8 +59,9 @@ export const paymentService = {
     };
   },
 
-  /** Somente modo demonstração: simula a confirmação do gateway. */
-  simulateDemoApproval(orderId: string) {
-    return simulateDemoPaymentApproval(orderId);
+  /** Aprova o pagamento sem gateway (modo demonstração ou apresentação). */
+  async simulateDemoApproval(order: Order): Promise<Result> {
+    if (IS_DEMO_MODE) return simulateDemoPaymentApproval(order.id);
+    return remoteDemoApprovePayment(order.id, order.guest_access_token);
   },
 };

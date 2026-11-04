@@ -379,6 +379,7 @@ const SETTINGS_COLUMNS = [
   'delivery_enabled', 'pickup_enabled', 'pickup_instructions', 'accepted_payment_methods',
   'customer_announcement', 'timezone', 'delivery_pricing_mode', 'store_latitude', 'store_longitude',
   'delivery_base_fee_cents', 'delivery_included_km', 'delivery_fee_per_km_cents', 'delivery_max_km',
+  'payment_demo_mode',
 ];
 
 function withId(row: Record<string, unknown>, id?: string) {
@@ -533,4 +534,12 @@ export async function remoteMapboxStatus(): Promise<{ server_token: boolean; sto
   const { data, error } = await db().rpc('admin_mapbox_status');
   if (error || !data) return null;
   return data as { server_token: boolean; store_location: boolean; calls_today: number };
+}
+
+// --- MODO APRESENTAÇÃO (pagamento simulado, só com payment_demo_mode ligado no banco) ---
+export function remoteDemoApprovePayment(orderId: string, guestToken?: string): Promise<Result> {
+  return rpcResult('demo_approve_payment', {
+    p_order_id: orderId,
+    p_guest_token: guestToken ?? getGuestTokenForOrder(orderId) ?? null,
+  });
 }

@@ -18,7 +18,7 @@ import { useAuth } from '../auth/AuthContext';
 import { PaymentMethod, Order } from '../../types';
 import { formatCentsToBRL, parseBRLToCents } from '../../lib/formatters/currency';
 import { orderService } from '../../services/order.service';
-import { paymentService } from '../../services/payment.service';
+import { isPresentationPayment, paymentService } from '../../services/payment.service';
 import { IS_DEMO_MODE, getOrderById, getStoreSettings, subscribeToRealtime } from '../../services/storage';
 import { formatCep, lookupCep } from '../../lib/viacep';
 import { formatDistance } from '../../lib/mapbox';
@@ -84,6 +84,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, o
   const { user } = useAuth();
 
   const settings = getStoreSettings();
+  const presentation = isPresentationPayment();
   const availableMethods = ALL_METHODS.filter(
     (m) => !settings.accepted_payment_methods || settings.accepted_payment_methods.includes(m)
   );
@@ -252,7 +253,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, o
   };
 
   const startOnlinePayment = async (order: Order) => {
-    if (IS_DEMO_MODE) return; // tela de simulação
+    if (presentation) return; // tela de pagamento simulado
     setStartingPayment(true);
     setPaymentError(null);
     const res = await paymentService.startOnlinePayment(order);
@@ -368,9 +369,18 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, o
     }
   };
 
-  const handleSimulateDemoPayment = () => {
+  const handleSimulateDemoPayment = async () => {
     if (!createdOrder) return;
-    paymentService.simulateDemoApproval(createdOrder.id);
+    setStartingPayment(true);
+    setPaymentError(null);
+    const res = await paymentService.simulateDemoApproval(createdOrder);
+    setStartingPayment(false);
+    if (!res.success) {
+      setPaymentError(res.error || 'Não foi possível aprovar o pagamento de apresentação.');
+      return;
+    }
+    const fresh = getOrderById(createdOrder.id);
+    finish(fresh ? { ...fresh, payment_status: 'PAGO' } : { ...createdOrder, payment_status: 'PAGO' });
   };
 
   const handleCopyPix = () => {
@@ -435,18 +445,20 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, o
               </p>
             </div>
 
-            {IS_DEMO_MODE ? (
+            {presentation ? (
               <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs space-y-3">
                 <p>
-                  <strong>Modo demonstração:</strong> nenhum pagamento real é gerado. Use o botão abaixo para simular a
-                  aprovação do gateway.
+                  <strong>{IS_DEMO_MODE ? 'Modo demonstração' : 'Modo apresentação'}:</strong> nenhum valor é cobrado. Use o
+                  botão abaixo para simular a aprovação do pagamento e seguir com o pedido.
                 </p>
+                {paymentError && <p className="text-rose-300">{paymentError}</p>}
                 <button
                   type="button"
                   onClick={handleSimulateDemoPayment}
-                  className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black uppercase tracking-wide transition cursor-pointer"
+                  disabled={startingPayment}
+                  className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-black uppercase tracking-wide transition cursor-pointer"
                 >
-                  Simular pagamento aprovado
+                  {startingPayment ? 'Aprovando…' : 'Simular pagamento aprovado'}
                 </button>
               </div>
             ) : startingPayment ? (
@@ -719,6 +731,11 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({ isOpen, onClose, o
             {/* 4. Payment Method Selection */}
             <div className="space-y-3">
               <label className="text-xs font-bold uppercase tracking-wider text-zinc-400">4. Forma de Pagamento</label>
+              {presentation && !IS_DEMO_MODE && (
+                <p className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-200">
+                  Modo apresentação: Pix e cartão online são simulados e nenhum valor é cobrado.
+                </p>
+              )}
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                 {availableMethods.map((method) => (
