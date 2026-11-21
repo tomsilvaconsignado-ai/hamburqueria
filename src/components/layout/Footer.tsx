@@ -143,6 +143,9 @@ export const Footer: React.FC<FooterProps> = ({
             <span>•</span>
             <span>Supabase PostgreSQL + RLS</span>
           </p>
+          <a href="https://measuresistemas.com.br/" target="_blank" rel="noopener" className="text-[11px] text-zinc-500 transition-colors hover:text-zinc-200">
+            Desenvolvido por MEASURE Sistemas
+          </a>
         </div>
       </div>
     </footer>
